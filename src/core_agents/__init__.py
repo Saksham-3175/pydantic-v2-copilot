@@ -2,6 +2,7 @@
 
 from core_agents.critic import ASTCritic
 from core_agents.decomposer import QueryDecomposer
+from core_agents.llm import UnifiedLLMClient
 from core_agents.orchestrator import MigrationOrchestrator
 from core_agents.retriever import ScopedRetriever
 from core_agents.schemas import (
@@ -25,6 +26,7 @@ __all__ = [
     "MigrationOrchestrator",
     "QueryDecomposer",
     "ScopedRetriever",
+    "UnifiedLLMClient",
     "VerifiedMigrationResult",
 ]
 

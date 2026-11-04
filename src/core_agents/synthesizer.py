@@ -7,31 +7,35 @@ import os
 import re
 import typing
 
-from groq import AsyncGroq
-
+from core_agents.llm import UnifiedLLMClient
 from core_agents.schemas import DocChunkPayload, DraftResponse
 
 
 class CodeSynthesizer:
-    """Agent that synthesizes modern Pydantic v2 code using Groq qwen/qwen3.8-27b and retrieved documentation."""
+    """Agent that synthesizes modern Pydantic v2 code using unified LLM client (Groq primary, Gemini fallback)."""
 
     def __init__(
         self,
+        llm_client: typing.Optional[UnifiedLLMClient] = None,
         api_key: typing.Optional[str] = None,
-        model: str = "qwen/qwen3.8-27b",
-    ):
-        key = api_key or os.environ.get("GROQ_API_KEY")
-        if not key:
-            try:
-                from dotenv import find_dotenv, load_dotenv
+        model: typing.Optional[str] = None,
+    ) -> None:
+        self.api_key = api_key or os.environ.get("GROQ_API_KEY")
+        self.model = model or "qwen/qwen3.8-27b"
+        self.llm_client = llm_client or UnifiedLLMClient(
+            groq_api_key=self.api_key,
+            primary_model=self.model,
+        )
+        self._legacy_client: typing.Any = None
 
-                load_dotenv(find_dotenv(usecwd=True))
-                key = os.environ.get("GROQ_API_KEY")
-            except Exception:
-                pass
-        self.api_key = key
-        self.model = model
-        self.client = AsyncGroq(api_key=self.api_key) if self.api_key else None
+    @property
+    def client(self) -> typing.Any:
+        return self._legacy_client if self._legacy_client is not None else self.llm_client.groq_client
+
+    @client.setter
+    def client(self, client: typing.Any) -> None:
+        self._legacy_client = client
+        self.llm_client.groq_client = client
 
     async def synthesize(
         self,
@@ -50,25 +54,8 @@ class CodeSynthesizer:
                 iteration=iteration,
             )
 
-        # Live Groq API execution if client is configured and API key exists
-        if self.client and self.api_key:
-            try:
-                return await self._call_groq_api(code_clean, context_chunks, feedback, iteration)
-            except Exception:
-                # Fallback to deterministic offline synthesizer on error/offline
-                pass
-
-        # Deterministic offline synthesizer (for hermetic testing)
-        return self._heuristic_synthesize(code_clean, context_chunks, feedback, iteration)
-
-    async def _call_groq_api(
-        self,
-        code: str,
-        chunks: list[DocChunkPayload],
-        feedback: typing.Optional[str],
-        iteration: int,
-    ) -> DraftResponse:
-        docs_text = "\n\n---\n\n".join([f"### {c.breadcrumb}\n{c.content}" for c in chunks])
+        # 1. Try unified LLM client (Groq primary, Gemini fallback)
+        docs_text = "\n\n---\n\n".join([f"### {c.breadcrumb}\n{c.content}" for c in context_chunks])
         feedback_prompt = (
             f"\n\nCRITICAL FIXES REQUIRED FROM PREVIOUS ATTEMPT:\n{feedback}\nYou MUST resolve every failure noted above."
             if feedback
@@ -89,28 +76,25 @@ class CodeSynthesizer:
 
         user_msg = (
             f"REFERENCE DOCUMENTATION:\n{docs_text}\n\n"
-            f"LEGACY CODE TO MODERNIZE:\n```python\n{code}\n```"
+            f"LEGACY CODE TO MODERNIZE:\n```python\n{code_clean}\n```"
             f"{feedback_prompt}\n\n"
             "Produce the modern Pydantic v2 implementation as valid JSON."
         )
 
-        resp = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-        )
-        content = resp.choices[0].message.content or "{}"
-        data = json.loads(content)
-        return DraftResponse(
-            modern_code=data.get("modern_code", code),
-            explanation=data.get("explanation", "Modernized to Pydantic v2."),
-            changes_made=data.get("changes_made", []),
-            iteration=iteration,
-        )
+        try:
+            draft, _ = await self.llm_client.generate_structured(
+                prompt=user_msg,
+                schema=DraftResponse,
+                system_instruction=system_msg,
+            )
+            draft.iteration = iteration
+            return draft
+        except Exception:
+            # Fallback to deterministic offline synthesizer on error/offline
+            pass
+
+        # 2. Deterministic offline synthesizer (for hermetic testing)
+        return self._heuristic_synthesize(code_clean, context_chunks, feedback, iteration)
 
     def _heuristic_synthesize(
         self,
@@ -167,7 +151,6 @@ class CodeSynthesizer:
         # Validator transformation
         if "@validator(" in modern:
             need_import = "field_validator" not in modern
-            # Replace @validator with @field_validator and add @classmethod
             modern = re.sub(
                 r"@validator\((.*?)\)\s*\n\s*def\s+",
                 r"@field_validator(\1, mode='after')\n    @classmethod\n    def ",

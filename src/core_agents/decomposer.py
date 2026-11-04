@@ -4,25 +4,42 @@ from __future__ import annotations
 
 import os
 import typing
-from google import genai
-from google.genai import types
 
+from core_agents.llm import UnifiedLLMClient
 from core_agents.schemas import DecomposedQuery
 
 
 class QueryDecomposer:
     """Agent that analyzes legacy Python code and decomposes it into target migration topics and sub-queries."""
 
-    def __init__(self, api_key: typing.Optional[str] = None, model: str = "gemini-3.8-flash"):
+    def __init__(
+        self,
+        llm_client: typing.Optional[UnifiedLLMClient] = None,
+        api_key: typing.Optional[str] = None,
+        model: typing.Optional[str] = None,
+    ) -> None:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        self.model = model
-        self.client = genai.Client(api_key=self.api_key) if self.api_key else None
+        self.model = model or "qwen/qwen3.8-27b"
+        self.llm_client = llm_client or UnifiedLLMClient(
+            gemini_api_key=self.api_key,
+            primary_model=self.model,
+        )
+        self._legacy_client: typing.Any = None
+
+    @property
+    def client(self) -> typing.Any:
+        return self._legacy_client if self._legacy_client is not None else self.llm_client.gemini_client
+
+    @client.setter
+    def client(self, client: typing.Any) -> None:
+        self._legacy_client = client
+        self.llm_client.gemini_client = client
 
     async def decompose(self, code: str) -> DecomposedQuery:
         """Decompose legacy code snippet into detected topics and search sub-queries.
 
-        Handles both:
-        - Live Gemini API execution via response_schema=DecomposedQuery when client is present.
+        Handles:
+        - Primary Groq LLM execution with automatic Gemini failover via UnifiedLLMClient.
         - Deterministic offline heuristic fallback for tests/offline environments.
         """
         code_clean = code.strip()
@@ -34,31 +51,26 @@ class QueryDecomposer:
                 sub_queries=[],
             )
 
-        # If live client available, use gemini-3.8-flash with structured output
-        if self.client and (self.api_key or os.environ.get("GEMINI_API_KEY")):
-            try:
-                prompt = (
-                    "Analyze the following Python code for legacy Pydantic v1 or legacy FastAPI patterns. "
-                    "Extract the migration topics (e.g. 'pydantic_validators', 'pydantic_config', "
-                    "'pydantic_model_validators', 'pydantic_serialization', 'pydantic_settings', "
-                    "'fastapi_lifespan', 'fastapi_dependencies') and generate specific search queries.\n\n"
-                    f"```python\n{code_clean}\n```"
-                )
-                response = await self.client.aio.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=DecomposedQuery,
-                    ),
-                )
-                if response.text:
-                    return DecomposedQuery.model_validate_json(response.text)
-            except Exception:
-                # Fallback to heuristic parser on network/API failure
-                pass
+        # 1. Try unified LLM client if configured or mock client attached
+        prompt = (
+            "Analyze the following Python code for legacy Pydantic v1 or legacy FastAPI patterns. "
+            "Extract the migration topics (e.g. 'pydantic_validators', 'pydantic_config', "
+            "'pydantic_model_validators', 'pydantic_serialization', 'pydantic_settings', "
+            "'fastapi_lifespan', 'fastapi_dependencies') and generate specific search queries.\n\n"
+            f"```python\n{code_clean}\n```"
+        )
+        try:
+            result, _ = await self.llm_client.generate_structured(
+                prompt=prompt,
+                schema=DecomposedQuery,
+                system_instruction="Analyze Python code and extract migration topics as JSON.",
+            )
+            return result
+        except Exception:
+            # Fallback to heuristic parser on network/API failure
+            pass
 
-        # Heuristic offline decomposition (for fast hermetic testing & offline mode)
+        # 2. Heuristic offline decomposition (for fast hermetic testing & offline mode)
         return self._heuristic_decompose(code_clean)
 
     def _heuristic_decompose(self, code: str) -> DecomposedQuery:
