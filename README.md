@@ -4,6 +4,8 @@ A high-precision, multi-agent RAG system engineered to modernize legacy Python c
 
 Built with **FastAPI**, **Qdrant Vector Database**, **Groq API (`qwen/qwen3.8-27b`)**, **Google GenAI Embeddings (`gemini-embedding-001`)**, and **Deterministic Python AST Verification**.
 
+> 💡 **Architectural Trade-offs & Deep Dive**: For an in-depth breakdown of rejected alternatives, RAG failure modes (The Negation Trap, The Indentation Guard), and engineering decisions, see [**DECISIONS.md**](DECISIONS.md).
+
 ---
 
 ## 1. System Architecture
