@@ -1,0 +1,22 @@
+{
+  "run_id": "run_20261105_035408_golden_benchmark",
+  "eval_id": "eval_03_model_validator",
+  "topic": "pydantic_validators",
+  "timestamp": "2026-11-05T03:54:17.075693+00:00",
+  "passed": true,
+  "iterations_used": 1,
+  "duration_ms": 2753.01,
+  "legacy_input_code": "from pydantic import BaseModel, root_validator\n\nclass SignUpModel(BaseModel):\n    password: str\n    confirm_password: str\n\n    @root_validator\n    def verify_passwords_match(cls, values):\n        pw = values.get('password')\n        cpw = values.get('confirm_password')\n        if pw and cpw and pw != cpw:\n            raise ValueError('passwords do not match')\n        return values\n",
+  "modern_output_code": "from pydantic import BaseModel, model_validator\n\nclass SignUpModel(BaseModel):\n    password: str\n    confirm_password: str\n\n    @model_validator(mode='before')\n    @classmethod\n    def verify_passwords_match(cls, values):\n        pw = values.get('password')\n        cpw = values.get('confirm_password')\n        if pw and cpw and pw != cpw:\n            raise ValueError('passwords do not match')\n        return values",
+  "critic_verdict": {
+    "passed": true,
+    "failures": [],
+    "suggested_fixes": []
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": true,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}

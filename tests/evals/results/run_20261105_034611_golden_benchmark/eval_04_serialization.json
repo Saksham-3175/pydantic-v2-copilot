@@ -1,0 +1,32 @@
+{
+  "run_id": "run_20261105_034611_golden_benchmark",
+  "eval_id": "eval_04_serialization",
+  "topic": "pydantic_serialization",
+  "timestamp": "2026-11-05T03:46:26.950201+00:00",
+  "passed": false,
+  "iterations_used": 2,
+  "duration_ms": 4178.17,
+  "legacy_input_code": "from pydantic import BaseModel\n\nclass Item(BaseModel):\n    title: str\n    price: float\n\nitem = Item(title=\"Book\", price=19.99)\nd = item.dict(exclude={\"price\"})\nj = item.json()\n",
+  "modern_output_code": "from pydantic import BaseModel\n\nclass Item(BaseModel):\n    title: str\n    price: float\n\nitem = Item(title=\"Book\", price=19.99)\nd = item.model_dump(exclude={\"price\"})\nj = item.json()",
+  "critic_verdict": {
+    "passed": false,
+    "failures": [
+      {
+        "gate": 2,
+        "gate_name": "Negative Invariant Scan",
+        "message": "Legacy export method '.dict()' or '.json()' is deprecated. Use '.model_dump()' or '.model_dump_json()'.",
+        "offending_line": 9,
+        "offending_code": "j = item.json()"
+      }
+    ],
+    "suggested_fixes": [
+      "Replace '.dict()' with '.model_dump()' and '.json()' with '.model_dump_json()'."
+    ]
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": false,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}

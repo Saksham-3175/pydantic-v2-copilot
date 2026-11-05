@@ -1,0 +1,55 @@
+{
+  "run_id": "run_20261105_034953_golden_benchmark",
+  "tag": "golden_benchmark",
+  "timestamp": "2026-11-05T03:49:53.773908+00:00",
+  "total_evals": 6,
+  "passed_evals": 4,
+  "failed_evals": 2,
+  "pass_rate_percent": 66.67,
+  "avg_iterations": 1.33,
+  "total_duration_ms": 18845.57,
+  "evals": [
+    {
+      "eval_id": "eval_01_config_dict",
+      "topic": "pydantic_config",
+      "passed": false,
+      "iterations": 2,
+      "duration_ms": 4029.33
+    },
+    {
+      "eval_id": "eval_02_field_validator",
+      "topic": "pydantic_validators",
+      "passed": true,
+      "iterations": 1,
+      "duration_ms": 2581.83
+    },
+    {
+      "eval_id": "eval_03_model_validator",
+      "topic": "pydantic_validators",
+      "passed": true,
+      "iterations": 1,
+      "duration_ms": 2786.25
+    },
+    {
+      "eval_id": "eval_04_serialization",
+      "topic": "pydantic_serialization",
+      "passed": true,
+      "iterations": 1,
+      "duration_ms": 2643.45
+    },
+    {
+      "eval_id": "eval_05_settings",
+      "topic": "pydantic_settings",
+      "passed": false,
+      "iterations": 2,
+      "duration_ms": 3967.91
+    },
+    {
+      "eval_id": "eval_06_fastapi_lifespan",
+      "topic": "fastapi_lifespan",
+      "passed": true,
+      "iterations": 1,
+      "duration_ms": 2836.8
+    }
+  ]
+}

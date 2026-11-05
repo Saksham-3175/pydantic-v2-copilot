@@ -1,0 +1,22 @@
+{
+  "run_id": "run_20261105_035231_golden_benchmark",
+  "eval_id": "eval_05_settings",
+  "topic": "pydantic_settings",
+  "timestamp": "2026-11-05T03:52:45.622145+00:00",
+  "passed": true,
+  "iterations_used": 1,
+  "duration_ms": 2629.75,
+  "legacy_input_code": "from pydantic import BaseSettings\n\nclass AppSettings(BaseSettings):\n    app_name: str = \"MyService\"\n    debug: bool = False\n\n    class Config:\n        env_prefix = \"MYAPP_\"\n",
+  "modern_output_code": "from pydantic_settings import BaseSettings, SettingsConfigDict\n\nclass AppSettings(BaseSettings):\n    app_name: str = \"MyService\"\n    debug: bool = False\n\n    model_config = SettingsConfigDict(env_prefix=\"MYAPP_\")",
+  "critic_verdict": {
+    "passed": true,
+    "failures": [],
+    "suggested_fixes": []
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": true,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}

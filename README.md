@@ -144,14 +144,15 @@ This check is evaluated before every heavy stage (decomposition, vector retrieva
 ## 7. CLI Runbook & Testing Matrix
 
 ### 7.1 Running the Automated Test Suite
-All automated unit and integration tests execute 100% hermetically offline in ~11 seconds using Astral `uv`:
+All automated unit, integration, and evaluation tests execute 100% hermetically offline in ~40 seconds using Astral `uv`:
 
 ```bash
-# Run the complete test suite (81 tests: 80 passed, 1 skipped)
-uv run pytest -v
+# Run the complete test suite (92 tests: 91 passed, 1 skipped)
+uv run pytest tests/ -v
 ```
 
 ### Complete Test Matrix:
+* **`tests/evals/test_golden_evals.py` (6 tests)**: The 6-Question Golden Benchmark (Minimal Spanning Basis) verifying all 4 AST & runtime gates.
 * **`tests/test_agent_schemas.py` (5 tests)**: Inter-agent Pydantic v2 data contracts.
 * **`tests/test_critic.py` (13 tests)**: 4 deterministic AST verification gates and failure detection.
 * **`tests/test_decomposer.py` (7 tests)**: Topic decomposition, search query formulation, empty string & comments edge cases.
@@ -159,6 +160,7 @@ uv run pytest -v
 * **`tests/test_synthesizer.py` (5 tests)**: Groq `qwen/qwen3.8-27b` integration, reflection on critic feedback, and offline heuristics.
 * **`tests/test_orchestrator.py` (7 tests)**: End-to-end migration supervisor, reflection loop retry, iteration exhaustion, and edge cases.
 * **`tests/test_api.py` (10 tests)**: FastAPI routes (`GET /health`, `POST /v1/migrate`, `POST /v1/migrate/stream`), SSE event lifecycle, and disconnect handling.
+* **`tests/test_unified_llm.py` (5 tests)**: Multi-provider failover (Groq primary, Gemini secondary).
 * **Storage Tests (`tests/test_chunker.py`, `test_embedder.py`, `test_ingest.py`, `test_qdrant_manager.py`, `test_real_embeddings.py`) (30 tests)**: State-machine chunking, vector normalization, batch ingestion, and Qdrant lifecycle.
 
 ---
@@ -206,3 +208,39 @@ uv run python -m storage.ingest --recreate
 # Run dry-run without writing to disk
 uv run python -m storage.ingest --dry-run
 ```
+
+---
+
+## 8. Evaluation-Driven Development & Golden Benchmark
+
+The project incorporates an **Evaluation-Driven Development (EDD)** framework that continuously measures accuracy against the **6-Question Golden Benchmark (The Minimal Spanning Basis)**.
+
+### 8.1 The 6 Orthogonal Basis Vectors
+* **`eval_01_config_dict`**: Migrates inner `class Config:` (`orm_mode=True`, `allow_mutation=False`) ➔ `model_config = ConfigDict(from_attributes=True, frozen=True)`.
+* **`eval_02_field_validator`**: Migrates `@validator('name', pre=True)` ➔ `@field_validator('name', mode='before')` with `@classmethod`.
+* **`eval_03_model_validator`**: Migrates whole-model `@root_validator` ➔ `@model_validator(mode='before')` with `@classmethod`.
+* **`eval_04_serialization`**: Migrates export methods `.dict()` and `.json()` ➔ `.model_dump()` and `.model_dump_json()`.
+* **`eval_05_settings`**: Migrates `BaseSettings` extraction ➔ `from pydantic_settings import BaseSettings, SettingsConfigDict`.
+* **`eval_06_fastapi_lifespan`**: Migrates deprecated `@app.on_event` ➔ `@asynccontextmanager` FastAPI lifespan handlers.
+
+### 8.2 The 4 Deterministic Verification Gates
+1. **Gate 1 (AST Syntax)**: `ast.parse()` verifies valid compilation with zero syntax errors.
+2. **Gate 2 (Negative Invariant Scan)**: 0 occurrences of deprecated v1 tokens (`@validator`, `@root_validator`, inner `class Config:`, `.dict()`, `.json()`, `from pydantic import BaseSettings`, `@app.on_event`).
+3. **Gate 3 (Positive Invariant Scan)**: Required modern v2 tokens present (`@field_validator` with `@classmethod`, `ConfigDict`, `SettingsConfigDict`, `model_dump()`, `lifespan`).
+4. **Gate 4 (Runtime Sandbox)**: `exec()` dynamically instantiates models in an isolated sandbox with dynamic module mocking (`_MockModuleFinder`).
+
+### 8.3 Running the Evaluation Benchmark
+```bash
+# Run the 4-gate automated evaluation test suite
+uv run pytest tests/evals/test_golden_evals.py -v
+
+# Run the standalone E2E benchmark CLI and update markdown report
+uv run python tests/evals/run_e2e_benchmark.py --tag baseline
+```
+
+### 8.4 Persistent Run Telemetry (`tests/evals/results/`)
+Benchmark executions write structured JSON telemetry to disk:
+* **Run Folder**: `tests/evals/results/run_<timestamp>_<tag>/`
+* **Individual Eval Records**: `eval_01_config_dict.json` through `eval_06_fastapi_lifespan.json` containing exact input/output diffs, latency, and gate verification statuses.
+* **Run Summary**: `summary.json` with aggregate pass rates and latency statistics.
+* **Historical Ledger**: `tests/evals/results/history_manifest.json` tracking pass rate trends over time.

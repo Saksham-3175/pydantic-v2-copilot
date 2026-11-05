@@ -1,0 +1,32 @@
+{
+  "run_id": "run_20261105_034953_golden_benchmark",
+  "eval_id": "eval_01_config_dict",
+  "topic": "pydantic_config",
+  "timestamp": "2026-11-05T03:49:57.986047+00:00",
+  "passed": false,
+  "iterations_used": 2,
+  "duration_ms": 4029.33,
+  "legacy_input_code": "from pydantic import BaseModel\n\nclass UserModel(BaseModel):\n    id: int\n    name: str\n\n    class Config:\n        orm_mode = True\n        allow_mutation = False\n",
+  "modern_output_code": "from pydantic import BaseModel\n\nclass UserModel(BaseModel):\n    id: int\n    name: str\n\n    model_config = ConfigDict(from_attributes=True, frozen=True)",
+  "critic_verdict": {
+    "passed": false,
+    "failures": [
+      {
+        "gate": 4,
+        "gate_name": "Runtime Execution",
+        "message": "Runtime evaluation error: name 'ConfigDict' is not defined",
+        "offending_line": null,
+        "offending_code": null
+      }
+    ],
+    "suggested_fixes": [
+      "Resolve runtime evaluation error: Runtime evaluation error: name 'ConfigDict' is not defined"
+    ]
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": true,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": false
+  }
+}

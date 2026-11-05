@@ -1,0 +1,39 @@
+{
+  "run_id": "run_20261105_034611_golden_benchmark",
+  "eval_id": "eval_06_fastapi_lifespan",
+  "topic": "fastapi_lifespan",
+  "timestamp": "2026-11-05T03:46:35.098663+00:00",
+  "passed": false,
+  "iterations_used": 2,
+  "duration_ms": 3947.37,
+  "legacy_input_code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.on_event(\"startup\")\nasync def startup_event():\n    print(\"Application starting up\")\n\n@app.on_event(\"shutdown\")\nasync def shutdown_event():\n    print(\"Application shutting down\")\n",
+  "modern_output_code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.on_event(\"startup\")\nasync def startup_event():\n    print(\"Application starting up\")\n\n@app.on_event(\"shutdown\")\nasync def shutdown_event():\n    print(\"Application shutting down\")",
+  "critic_verdict": {
+    "passed": false,
+    "failures": [
+      {
+        "gate": 2,
+        "gate_name": "Negative Invariant Scan",
+        "message": "@app.on_event('startup'/'shutdown') is deprecated. Use '@asynccontextmanager async def lifespan(app: FastAPI):'.",
+        "offending_line": 6,
+        "offending_code": "async def startup_event():"
+      },
+      {
+        "gate": 2,
+        "gate_name": "Negative Invariant Scan",
+        "message": "@app.on_event('startup'/'shutdown') is deprecated. Use '@asynccontextmanager async def lifespan(app: FastAPI):'.",
+        "offending_line": 10,
+        "offending_code": "async def shutdown_event():"
+      }
+    ],
+    "suggested_fixes": [
+      "Replace @app.on_event('startup'/'shutdown') with FastAPI lifespan asynccontextmanager."
+    ]
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": false,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}

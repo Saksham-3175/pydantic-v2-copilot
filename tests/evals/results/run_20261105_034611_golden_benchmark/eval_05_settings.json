@@ -1,0 +1,32 @@
+{
+  "run_id": "run_20261105_034611_golden_benchmark",
+  "eval_id": "eval_05_settings",
+  "topic": "pydantic_settings",
+  "timestamp": "2026-11-05T03:46:31.052528+00:00",
+  "passed": false,
+  "iterations_used": 2,
+  "duration_ms": 3982.0,
+  "legacy_input_code": "from pydantic import BaseSettings\n\nclass AppSettings(BaseSettings):\n    app_name: str = \"MyService\"\n    debug: bool = False\n\n    class Config:\n        env_prefix = \"MYAPP_\"\n",
+  "modern_output_code": "from pydantic import ConfigDict\nfrom pydantic import BaseSettings\n\nclass AppSettings(BaseSettings):\n    app_name: str = \"MyService\"\n    debug: bool = False\n\n    model_config = ConfigDict(env_prefix=\"MYAPP_\")",
+  "critic_verdict": {
+    "passed": false,
+    "failures": [
+      {
+        "gate": 2,
+        "gate_name": "Negative Invariant Scan",
+        "message": "BaseSettings has been moved to 'pydantic_settings'. Import from 'pydantic_settings import BaseSettings'.",
+        "offending_line": 2,
+        "offending_code": "from pydantic import BaseSettings"
+      }
+    ],
+    "suggested_fixes": [
+      "Import BaseSettings from 'pydantic_settings' instead of 'pydantic'."
+    ]
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": false,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}

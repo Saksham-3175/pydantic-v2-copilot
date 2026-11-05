@@ -105,65 +105,170 @@ class CodeSynthesizer:
     ) -> DraftResponse:
         """Deterministic rule-based code modernizer for fast offline testing."""
         modern = code
-        changes = []
+        changes: list[str] = []
 
-        # If feedback mentions dict(), replace it
+        # If feedback mentions dict(), replace it based on Critic feedback
         if feedback and (".dict()" in feedback or "dict" in feedback.lower()):
             modern = re.sub(r"\.dict\(", ".model_dump(", modern)
             changes.append("Replaced .dict() with .model_dump() based on Critic feedback")
 
-        # ConfigDict transformation
-        if "class Config:" in modern:
-            need_import = "ConfigDict" not in modern
-            config_pattern = re.compile(
-                r"([ \t]*)class Config:\n((?:\1[ \t]+[^\n]+\n*)+)"
+        # ---------------------------------------------------------------------
+        # 1. FastAPI Lifespan (@app.on_event -> lifespan contextmanager)
+        # ---------------------------------------------------------------------
+        if "@app.on_event" in modern:
+            startup_body = '    print("Application starting up")'
+            shutdown_body = '    print("Application shutting down")'
+
+            # Extract body if possible
+            startup_match = re.search(r'@app\.on_event\("startup"\)\s*\nasync def \w+\(\):\n((?:[ \t]+[^\n]+\n*)+)', modern)
+            if startup_match:
+                startup_body = startup_match.group(1).rstrip()
+            shutdown_match = re.search(r'@app\.on_event\("shutdown"\)\s*\nasync def \w+\(\):\n((?:[ \t]+[^\n]+\n*)+)', modern)
+            if shutdown_match:
+                shutdown_body = shutdown_match.group(1).rstrip()
+
+            lifespan_code = (
+                "from contextlib import asynccontextmanager\n"
+                "from fastapi import FastAPI\n\n"
+                "@asynccontextmanager\n"
+                "async def lifespan(app: FastAPI):\n"
+                f"{startup_body}\n"
+                "    yield\n"
+                f"{shutdown_body}\n\n"
+                "app = FastAPI(lifespan=lifespan)\n"
             )
+            modern = lifespan_code
+            changes.append("Replaced deprecated @app.on_event startup/shutdown with @asynccontextmanager lifespan")
+            return DraftResponse(
+                modern_code=modern,
+                explanation="Modernized FastAPI startup and shutdown events to modern asynccontextmanager lifespan.",
+                changes_made=changes,
+                iteration=iteration,
+            )
+
+        # ---------------------------------------------------------------------
+        # 2. BaseSettings & SettingsConfigDict (pydantic -> pydantic_settings)
+        # ---------------------------------------------------------------------
+        is_settings = "BaseSettings" in modern or "env_prefix" in modern
+        if "from pydantic import BaseSettings" in modern:
+            modern = modern.replace(
+                "from pydantic import BaseSettings",
+                "from pydantic_settings import BaseSettings, SettingsConfigDict",
+            )
+            changes.append("Migrated BaseSettings import from pydantic to pydantic_settings")
+
+        # ---------------------------------------------------------------------
+        # 3. ConfigDict / SettingsConfigDict (inner class Config: removal)
+        # ---------------------------------------------------------------------
+        if "class Config:" in modern:
+            need_config_dict_import = (not is_settings) and ("ConfigDict" not in modern)
+            config_cls = "SettingsConfigDict" if is_settings else "ConfigDict"
+            config_pattern = re.compile(r"([ \t]*)class Config:\n((?:\1[ \t]+[^\n]+\n*)+)")
             match = config_pattern.search(modern)
             if match:
                 indent = match.group(1)
                 body = match.group(2)
-                attrs = []
+                attrs: list[str] = []
                 for line in body.strip().splitlines():
                     line = line.strip()
                     if "=" in line and not line.startswith("#"):
                         k, v = line.split("=", 1)
                         k = k.strip()
+                        v = v.strip()
                         if k == "orm_mode":
                             k = "from_attributes"
-                        attrs.append(f"{k}={v.strip()}")
+                        elif k == "allow_mutation":
+                            k = "frozen"
+                            v = "True" if v.lower() == "false" else "False"
+                        attrs.append(f"{k}={v}")
                 args_str = ", ".join(attrs)
                 modern = (
                     modern[: match.start()]
-                    + f"{indent}model_config = ConfigDict({args_str})\n"
+                    + f"{indent}model_config = {config_cls}({args_str})\n"
                     + modern[match.end() :]
                 )
             else:
                 modern = re.sub(
                     r"class Config:\s+([a-zA-Z_0-9]+)\s*=\s*([^\n]+)",
-                    r"model_config = ConfigDict(\1=\2)",
+                    rf"model_config = {config_cls}(\1=\2)",
                     modern,
                 )
-                modern = re.sub(r"class Config:.*", "model_config = ConfigDict()", modern)
-            if need_import or "ConfigDict" not in modern:
-                modern = "from pydantic import ConfigDict\n" + modern
-            changes.append("Replaced inner class Config with model_config = ConfigDict(...)")
+                modern = re.sub(r"class Config:.*", rf"model_config = {config_cls}()", modern)
 
-        # Validator transformation
+            if need_config_dict_import:
+                if "from pydantic import " in modern:
+                    modern = re.sub(r"from pydantic import ([^\n]+)", r"from pydantic import \1, ConfigDict", modern, count=1)
+                else:
+                    modern = "from pydantic import ConfigDict\n" + modern
+            changes.append(f"Replaced inner class Config with model_config = {config_cls}(...)")
+
+        # ---------------------------------------------------------------------
+        # 4. Field Validator (@validator -> @field_validator with @classmethod)
+        # ---------------------------------------------------------------------
         if "@validator(" in modern:
-            need_import = "field_validator" not in modern
+            def _replace_validator(m: re.Match[str]) -> str:
+                args = m.group(1).strip()
+                if "pre=True" in args:
+                    args = re.sub(r"\bpre=True\b", "mode='before'", args)
+                elif "mode=" not in args:
+                    args = f"{args}, mode='after'" if args else "mode='after'"
+                # Clean up duplicate commas or whitespace
+                args = re.sub(r",\s*,", ",", args).strip(" ,")
+                return f"@field_validator({args})\n    @classmethod\n    def "
+
             modern = re.sub(
                 r"@validator\((.*?)\)\s*\n\s*def\s+",
-                r"@field_validator(\1, mode='after')\n    @classmethod\n    def ",
+                _replace_validator,
                 modern,
             )
-            if need_import or "field_validator" not in modern:
+            # Fix imports
+            modern = re.sub(r"\bfrom pydantic import ([^\n]*)\bvalidator\b([^\n]*)", r"from pydantic import \1field_validator\2", modern)
+            if "field_validator" not in modern:
                 modern = "from pydantic import field_validator\n" + modern
+            # Clean up dangling commas in imports e.g. "import BaseModel, "
+            modern = re.sub(r",\s*,", ", ", modern)
+            modern = re.sub(r",\s*\n", "\n", modern)
             changes.append("Replaced @validator with @field_validator and added @classmethod")
 
-        # Serialization
+        # ---------------------------------------------------------------------
+        # 5. Model Validator (@root_validator -> @model_validator)
+        # ---------------------------------------------------------------------
+        if "@root_validator" in modern:
+            modern = re.sub(
+                r"@root_validator(?:\(.*?\))?\s*\n\s*def\s+",
+                r"@model_validator(mode='before')\n    @classmethod\n    def ",
+                modern,
+            )
+            # Fix imports
+            modern = re.sub(r"\bfrom pydantic import ([^\n]*)\broot_validator\b([^\n]*)", r"from pydantic import \1model_validator\2", modern)
+            if "model_validator" not in modern:
+                modern = "from pydantic import model_validator\n" + modern
+            modern = re.sub(r",\s*,", ", ", modern)
+            modern = re.sub(r",\s*\n", "\n", modern)
+            changes.append("Replaced @root_validator with @model_validator(mode='before') and @classmethod")
+
+        # ---------------------------------------------------------------------
+        # 6. Serialization (.dict() -> .model_dump() and .json() -> .model_dump_json())
+        # ---------------------------------------------------------------------
         if ".dict(" in modern:
             modern = re.sub(r"\.dict\(", ".model_dump(", modern)
             changes.append("Replaced .dict() with .model_dump()")
+        if ".json(" in modern:
+            modern = re.sub(r"\.json\(", ".model_dump_json(", modern)
+            changes.append("Replaced .json() with .model_dump_json()")
+
+        # Clean duplicate import lines if any
+        lines = modern.splitlines()
+        seen_imports: set[str] = set()
+        cleaned_lines: list[str] = []
+        for line in lines:
+            line_s = line.strip()
+            if line_s.startswith("from pydantic") or line_s.startswith("import pydantic"):
+                if line_s in seen_imports:
+                    continue
+                seen_imports.add(line_s)
+            cleaned_lines.append(line)
+        modern = "\n".join(cleaned_lines)
 
         return DraftResponse(
             modern_code=modern,

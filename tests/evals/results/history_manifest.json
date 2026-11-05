@@ -1,0 +1,62 @@
+[
+  {
+    "run_id": "run_20261105_034611_golden_benchmark",
+    "tag": "golden_benchmark",
+    "timestamp": "2026-11-05T03:46:11.532108+00:00",
+    "total_evals": 6,
+    "passed_evals": 1,
+    "pass_rate_percent": 16.67,
+    "avg_iterations": 1.83,
+    "total_duration_ms": 22821.71
+  },
+  {
+    "run_id": "run_20261105_034953_golden_benchmark",
+    "tag": "golden_benchmark",
+    "timestamp": "2026-11-05T03:49:53.773908+00:00",
+    "total_evals": 6,
+    "passed_evals": 4,
+    "pass_rate_percent": 66.67,
+    "avg_iterations": 1.33,
+    "total_duration_ms": 18845.57
+  },
+  {
+    "run_id": "run_20261105_035106_golden_benchmark",
+    "tag": "golden_benchmark",
+    "timestamp": "2026-11-05T03:51:06.724928+00:00",
+    "total_evals": 6,
+    "passed_evals": 6,
+    "pass_rate_percent": 100.0,
+    "avg_iterations": 1.0,
+    "total_duration_ms": 16112.94
+  },
+  {
+    "run_id": "run_20261105_035132_phase5_e2e_verified",
+    "tag": "phase5_e2e_verified",
+    "timestamp": "2026-11-05T03:51:32.391599+00:00",
+    "total_evals": 6,
+    "passed_evals": 6,
+    "pass_rate_percent": 100.0,
+    "avg_iterations": 1.0,
+    "total_duration_ms": 16404.18
+  },
+  {
+    "run_id": "run_20261105_035231_golden_benchmark",
+    "tag": "golden_benchmark",
+    "timestamp": "2026-11-05T03:52:31.606254+00:00",
+    "total_evals": 6,
+    "passed_evals": 6,
+    "pass_rate_percent": 100.0,
+    "avg_iterations": 1.0,
+    "total_duration_ms": 16164.2
+  },
+  {
+    "run_id": "run_20261105_035408_golden_benchmark",
+    "tag": "golden_benchmark",
+    "timestamp": "2026-11-05T03:54:08.537862+00:00",
+    "total_evals": 6,
+    "passed_evals": 6,
+    "pass_rate_percent": 100.0,
+    "avg_iterations": 1.0,
+    "total_duration_ms": 16225.19
+  }
+]

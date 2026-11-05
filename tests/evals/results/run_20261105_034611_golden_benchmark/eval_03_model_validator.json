@@ -1,0 +1,40 @@
+{
+  "run_id": "run_20261105_034611_golden_benchmark",
+  "eval_id": "eval_03_model_validator",
+  "topic": "pydantic_validators",
+  "timestamp": "2026-11-05T03:46:22.677455+00:00",
+  "passed": false,
+  "iterations_used": 2,
+  "duration_ms": 3963.37,
+  "legacy_input_code": "from pydantic import BaseModel, root_validator\n\nclass SignUpModel(BaseModel):\n    password: str\n    confirm_password: str\n\n    @root_validator\n    def verify_passwords_match(cls, values):\n        pw = values.get('password')\n        cpw = values.get('confirm_password')\n        if pw and cpw and pw != cpw:\n            raise ValueError('passwords do not match')\n        return values\n",
+  "modern_output_code": "from pydantic import BaseModel, root_validator\n\nclass SignUpModel(BaseModel):\n    password: str\n    confirm_password: str\n\n    @root_validator\n    def verify_passwords_match(cls, values):\n        pw = values.get('password')\n        cpw = values.get('confirm_password')\n        if pw and cpw and pw != cpw:\n            raise ValueError('passwords do not match')\n        return values",
+  "critic_verdict": {
+    "passed": false,
+    "failures": [
+      {
+        "gate": 2,
+        "gate_name": "Negative Invariant Scan",
+        "message": "Legacy validator decorator is deprecated in Pydantic v2. Use @field_validator or @model_validator.",
+        "offending_line": 8,
+        "offending_code": "def verify_passwords_match(cls, values):"
+      },
+      {
+        "gate": 4,
+        "gate_name": "Runtime Execution",
+        "message": "Runtime evaluation error: If you use `@root_validator` with pre=False (the default) you MUST specify `skip_on_failure=True`. Note that `@root_validator` is deprecated and should be replaced with `@model_validator`.\n\nFor further information visit https://errors.pydantic.dev/2.14/u/root-validator-pre-skip",
+        "offending_line": null,
+        "offending_code": null
+      }
+    ],
+    "suggested_fixes": [
+      "Replace @validator / @root_validator with @field_validator (requiring @classmethod) or @model_validator.",
+      "Resolve runtime evaluation error: Runtime evaluation error: If you use `@root_validator` with pre=False (the default) you MUST specify `skip_on_failure=True`. Note that `@root_validator` is deprecated and should be replaced with `@model_validator`.\n\nFor further information visit https://errors.pydantic.dev/2.14/u/root-validator-pre-skip"
+    ]
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": false,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": false
+  }
+}

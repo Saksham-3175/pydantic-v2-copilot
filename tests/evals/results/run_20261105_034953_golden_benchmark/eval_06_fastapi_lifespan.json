@@ -1,0 +1,22 @@
+{
+  "run_id": "run_20261105_034953_golden_benchmark",
+  "eval_id": "eval_06_fastapi_lifespan",
+  "topic": "fastapi_lifespan",
+  "timestamp": "2026-11-05T03:50:13.348603+00:00",
+  "passed": true,
+  "iterations_used": 1,
+  "duration_ms": 2836.8,
+  "legacy_input_code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.on_event(\"startup\")\nasync def startup_event():\n    print(\"Application starting up\")\n\n@app.on_event(\"shutdown\")\nasync def shutdown_event():\n    print(\"Application shutting down\")\n",
+  "modern_output_code": "from contextlib import asynccontextmanager\nfrom fastapi import FastAPI\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    print(\"Application starting up\")\n    yield\n    print(\"Application shutting down\")\n\napp = FastAPI(lifespan=lifespan)",
+  "critic_verdict": {
+    "passed": true,
+    "failures": [],
+    "suggested_fixes": []
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": true,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}

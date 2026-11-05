@@ -73,9 +73,9 @@ class _RuleScanVisitor(ast.NodeVisitor):
             return True
         if isinstance(val_node, ast.Call):
             func = val_node.func
-            if isinstance(func, ast.Name) and func.id in ("ConfigDict", "dict"):
+            if isinstance(func, ast.Name) and func.id in ("ConfigDict", "dict", "SettingsConfigDict"):
                 return True
-            if isinstance(func, ast.Attribute) and func.attr in ("ConfigDict", "dict"):
+            if isinstance(func, ast.Attribute) and func.attr in ("ConfigDict", "dict", "SettingsConfigDict"):
                 return True
         return False
 

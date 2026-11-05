@@ -1,0 +1,32 @@
+{
+  "run_id": "run_20261105_034953_golden_benchmark",
+  "eval_id": "eval_05_settings",
+  "topic": "pydantic_settings",
+  "timestamp": "2026-11-05T03:50:10.408075+00:00",
+  "passed": false,
+  "iterations_used": 2,
+  "duration_ms": 3967.91,
+  "legacy_input_code": "from pydantic import BaseSettings\n\nclass AppSettings(BaseSettings):\n    app_name: str = \"MyService\"\n    debug: bool = False\n\n    class Config:\n        env_prefix = \"MYAPP_\"\n",
+  "modern_output_code": "from pydantic_settings import BaseSettings, SettingsConfigDict\n\nclass AppSettings(BaseSettings):\n    app_name: str = \"MyService\"\n    debug: bool = False\n\n    model_config = SettingsConfigDict(env_prefix=\"MYAPP_\")",
+  "critic_verdict": {
+    "passed": false,
+    "failures": [
+      {
+        "gate": 3,
+        "gate_name": "Positive Invariant Scan",
+        "message": "Assignment to 'model_config' must use 'ConfigDict(...)'.",
+        "offending_line": 7,
+        "offending_code": "model_config = SettingsConfigDict(env_prefix=\"MYAPP_\")"
+      }
+    ],
+    "suggested_fixes": [
+      "Set 'model_config = ConfigDict(...)' using ConfigDict imported from 'pydantic'."
+    ]
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": true,
+    "gate_3_positive_invariants": false,
+    "gate_4_runtime_sandbox": true
+  }
+}

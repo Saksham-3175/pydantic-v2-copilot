@@ -1,0 +1,22 @@
+{
+  "run_id": "run_20261105_035132_phase5_e2e_verified",
+  "eval_id": "eval_01_config_dict",
+  "topic": "pydantic_config",
+  "timestamp": "2026-11-05T03:51:35.495656+00:00",
+  "passed": true,
+  "iterations_used": 1,
+  "duration_ms": 2863.52,
+  "legacy_input_code": "from pydantic import BaseModel\n\nclass UserModel(BaseModel):\n    id: int\n    name: str\n\n    class Config:\n        orm_mode = True\n        allow_mutation = False\n",
+  "modern_output_code": "from pydantic import BaseModel, ConfigDict\n\nclass UserModel(BaseModel):\n    id: int\n    name: str\n\n    model_config = ConfigDict(from_attributes=True, frozen=True)",
+  "critic_verdict": {
+    "passed": true,
+    "failures": [],
+    "suggested_fixes": []
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": true,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}
