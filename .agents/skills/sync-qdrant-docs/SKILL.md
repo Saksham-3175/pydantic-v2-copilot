@@ -11,7 +11,7 @@ description: >-
 This skill guides the agent through chunking, embedding, and synchronizing local Pydantic v2 and FastAPI markdown documents into the local Qdrant vector database.
 
 ## System Invariants & Schemas
-Before synchronizing, ensure you follow the locked system invariants defined in [PROJECT.md](../../../pydantic-v2-copilot/PROJECT.md):
+Before synchronizing, ensure you follow the locked system invariants defined in [PROJECT.md](PROJECT.md):
 * **Collection Name**: `python_tooling_docs`
 * **Vector Configuration**: 768 dimensions, `Distance.COSINE`
 * **Chunking**: Header-based hierarchical splitting on `##` and `###` with atomic code blocks (` ```python `)
@@ -31,7 +31,7 @@ Confirm that the canonical documentation snapshots exist in `pydantic-v2-copilot
 Run the ingestion script within the project environment using Astral `uv`:
 
 ```bash
-cd /home/gg31/Work/agy-code/pydantic-v2-copilot
+cd pydantic-v2-copilot
 uv run python -m storage.ingest
 ```
 
