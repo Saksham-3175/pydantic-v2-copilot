@@ -4,7 +4,7 @@ A high-precision, multi-agent RAG system engineered to modernize legacy Python c
 
 Built with **FastAPI**, **Qdrant Vector Database**, **Groq API (`qwen/qwen3.8-27b`)**, **Google GenAI Embeddings (`gemini-embedding-001`)**, and **Deterministic Python AST Verification**.
 
-> 💡 **Architectural Trade-offs & Deep Dive**: For an in-depth breakdown of rejected alternatives, RAG failure modes (The Negation Trap, The Indentation Guard), and engineering decisions, see [**DECISIONS.md**](DECISIONS.md).
+> For in-depth architectural trade-off records and design rationales, see [DECISIONS.md](DECISIONS.md).
 
 ---
 
@@ -65,16 +65,23 @@ Rather than attempting to superficially index all 50,000 words of Pydantic docum
 ### 3.1 State-Machine Chunker (The Indentation Guard)
 Standard RAG systems rely on sliding token windows, which indiscriminately slice code blocks in half, resulting in fatal `IndentationError` during retrieval. 
 
-Our `MarkdownHeaderChunker` (`src/storage/chunker.py`) uses a line-by-line state machine tracking code fence boundaries (`in_code_block: bool`). Code blocks (` ```python ... ``` `) are treated as indivisible atomic units and are guaranteed never to be split across chunk boundaries.
+The `MarkdownHeaderChunker` (`src/storage/chunker.py`) uses a line-by-line state machine tracking code fence boundaries (`in_code_block: bool`). Code blocks (` ```python ... ``` `) are treated as indivisible atomic units and are guaranteed never to be split across chunk boundaries.
 
 ### 3.2 The Negation Trap Solution
 In migration documentation, text often reads: *"Deprecated: Do NOT use `@validator`"*. A naive vector embedding will embed the legacy syntax, causing vector searches for legacy code to score deceptively high.
 
-We programmatically decouple:
+The system programmatically decouples:
 * **`search_text`**: Stripped of legacy code snippets and comments, containing only modern v2 target signatures and breadcrumbs. Embeddings represent the *desired modern target*.
 * **`payload_content`**: Retains the rich Before/After examples and full explanatory context for the Synthesizer agent and human reviewer.
 
-### 3.3 Dual-Layer Vector Persistence & Offline Real Cache
+### 3.3 Official Documentation Sources
+The bundled corpus snapshots in `src/storage/data/` were sourced directly from the official upstream repositories:
+* **Pydantic V2 Migration Guide**: [https://docs.pydantic.dev/latest/migration/](https://docs.pydantic.dev/latest/migration/)
+* **Pydantic Settings Documentation**: [https://docs.pydantic.dev/latest/concepts/pydantic_settings/](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
+* **FastAPI Lifespan Events**: [https://fastapi.tiangolo.com/advanced/events/](https://fastapi.tiangolo.com/advanced/events/)
+* **FastAPI Annotated Dependencies**: [https://fastapi.tiangolo.com/tutorial/dependencies/](https://fastapi.tiangolo.com/tutorial/dependencies/)
+
+### 3.4 Dual-Layer Vector Persistence & Offline Real Cache
 Embeddings are generated using Google GenAI `gemini-embedding-001` (768 dimensions, unit $L_2$ normalized):
 1. **Live On-Disk Qdrant (`./.qdrant_storage`)**: Persists points and Rust-backed HNSW graphs for live runtime search.
 2. **Offline Vector Snapshot (`src/storage/data/gemini_embeddings_cache.json`)**: Real 768-float Gemini vectors are saved into a lightweight JSON snapshot. This allows automated tests and CI/CD pipelines to run against **100% real Google Gemini embeddings** completely offline in 0.005 seconds with zero API costs.
@@ -133,7 +140,7 @@ The application gateway is built on modern FastAPI and async design patterns:
 Replaces deprecated `@app.on_event("startup")` and `@app.on_event("shutdown")`. On startup, it preheats the local Qdrant collection, initializes the embedder cache, and binds the `MigrationOrchestrator` to `app.state`. On shutdown, database connections are safely terminated.
 
 ### 6.2 The "Ghost Ship" Disconnect Guardrail
-Multi-agent LLM loops can burn expensive tokens if a user disconnects mid-flight. Our Server-Sent Events (SSE) generator checks:
+Multi-agent LLM loops can burn expensive tokens if a user disconnects mid-flight. The Server-Sent Events (SSE) generator checks:
 ```python
 if await request.is_disconnected():
     logger.info("Client disconnected. Aborting agent reflection loop to save tokens.")

@@ -1,165 +1,75 @@
-# Architecture Decision Records (ADRs) & Engineering Trade-offs
+# Architecture Decision Records (ADRs)
 
-A comprehensive engineering reference documenting the technical trade-offs, rejected alternatives, and failure modes resolved in the **Pydantic v2 Migration Copilot**.
-
----
-
-## 🧭 Executive Summary: Systems Over Scripts
-
-Most AI pair programmers are fragile wrappers: they paste user code into a prompt, call an LLM once, and return unverified code. When modernizing legacy Python codebases (Pydantic v1 ➔ v2), this naive approach fails because LLMs hallucinate legacy tokens (`@validator`, `pre=True`, inner `class Config:`).
-
-This project was engineered as a **closed-loop, compiler-verified multi-agent system**. Every component was designed with deliberate trade-offs to eliminate silent production failures:
-
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                              THE 8 CORE ARCHITECTURAL DECISIONS                        │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│ ADR-01: The Negation Trap Solution       ──▶ Programmatic decoupling of vector search  │
-│ ADR-02: The Indentation Guard            ──▶ Custom state-machine markdown chunker     │
-│ ADR-03: Deterministic AST Critic         ──▶ Static Python AST gates (zero LLM judge)  │
-│ ADR-04: Qdrant vs. ChromaDB              ──▶ Solving the RocksDB multi-process lock    │
-│ ADR-05: 6-Question Minimal Spanning Basis──▶ Orthogonal linear basis vs. 600 tests     │
-│ ADR-06: Dogfooding Pydantic v2           ──▶ Native structured output vs. dataclasses  │
-│ ADR-07: Dual Embedder & Offline Cache    ──▶ Hermetic 5ms CI runs with real vectors    │
-│ ADR-08: The Ghost Ship Disconnect Guard  ──▶ Aborting SSE agent loops on tab close     │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
+Engineering decisions, considered alternatives, and explicit trade-offs for the **Pydantic v2 Migration Copilot**.
 
 ---
 
-## ADR-01: The Negation Trap Solution (Decoupled Representation)
-
-### Context & Failure Mode
-Official migration guides frequently contrast obsolete syntax with modern replacements:
-> *"WARNING: Do **NOT** use `@validator` or `class Config:` in Pydantic v2."*
-
-If raw documentation is embedded directly into vectors, the vector is heavily contaminated with the legacy tokens (`@validator`, `Config`). When a user inputs legacy code, dense similarity search matches the negative warnings, confusing the downstream LLM into reproducing legacy syntax.
-
-### Options Considered
-* **Option A (Embed Raw Markdown)**: Simple, zero custom code. **Rejected**: Vector centroid is corrupted by legacy words; top hits return deprecation warnings instead of target modern signatures.
-* **Option B (Decoupled Representation - CHOSEN)**: Programmatically separate what we search on from what we pass to the LLM.
-
-### Implementation
-In `src/storage/chunker.py`:
-1. **`is_legacy_code_block()`**: Detects whether a code block begins with markers like `# Legacy Pydantic v1 Pattern (Deprecated)`.
-2. **`search_text`**: Strips out all legacy code blocks and negative warnings, retaining *only* modern v2 target signatures and structural breadcrumbs. Vector embeddings point strictly to the modern destination.
-3. **`payload_content`**: Retains the rich Before/After examples and explanatory prose, delivered to the LLM Synthesizer once the vector match is made.
+### ADR-01: MVP Scope — Minimal Spanning Basis vs. Full Corpus Ingestion
+* **Context**: Pydantic v2 introduced dozens of minor changes across its API.
+* **Option A (Ingest entire 50,000-word documentation corpus)**:
+  * *Gain*: Broad vanity coverage.
+  * *Sacrifice*: High token burn, slow test cycles, and high risk of subtle syntax hallucinations across unverified edge cases.
+* **Option B (Curate the 6-change Minimal Spanning Basis — CHOSEN)**:
+  * *Gain*: 100% mathematical coverage of all orthogonal breaking syntax (ConfigDict, field_validator, model_validator, serialization, BaseSettings, FastAPI lifespan) with sub-second hermetic test loops.
+  * *Sacrifice*: Defers rare edge cases (e.g., custom root types, generic models) to Phase 6 enterprise expansion.
+* **Why Option B Won**: Proving deterministic end-to-end correctness and AST zero-regression gates on the 6 basis vectors is necessary before scaling corpus volume.
 
 ---
 
-## ADR-02: The Indentation Guard (State-Machine Markdown Chunker)
-
-### Context & Failure Mode
-Standard RAG frameworks (LangChain, LlamaIndex) rely on character or token sliding windows (e.g., `RecursiveCharacterTextSplitter`). When applied to Python code, sliding windows indiscriminately sever classes and functions mid-indentation, causing fatal `IndentationError` when retrieved into an LLM prompt.
-
-### Options Considered
-* **Option A (LangChain / LlamaIndex Splitters)**: Quick to install, but pulls 15+ transitive dependencies (`tiktoken`, `fsspec`, `tenacity`) and chops Python code mid-block. **Rejected**.
-* **Option B (Custom `MarkdownHeaderChunker` - CHOSEN)**: ~75 lines of standard library Python (`re`, `dataclasses`).
-
-### Implementation
-In `src/storage/chunker.py`:
-* Partitions documents strictly along hierarchical Markdown headers (`## ` and `### `).
-* Employs an internal state machine (`in_code_block: bool`). Fenced code blocks (` ```python ... ``` `) are treated as indivisible atomic units that are **never split across chunk boundaries**.
-* Prepends parent breadcrumbs (`Context: [File > Section > SubSection]`), eliminating redundant overlapping windows while preserving structural context.
+### ADR-02: Storage Engine — Qdrant vs. ChromaDB
+* **Context**: The RAG pipeline requires local dense vector storage and metadata filtering.
+* **Option A (ChromaDB)**:
+  * *Gain*: Popular in basic tutorials; minimal initial setup.
+  * *Sacrifice*: Synchronous architecture blocks FastAPI's async event loop. Embedded SQLite/RocksDB engine acquires an exclusive OS file lock, causing `RuntimeError: Storage folder is already accessed by another instance` whenever tests and the live server run concurrently.
+* **Option B (Qdrant Dual-Mode — CHOSEN)**:
+  * *Gain*: Native async Rust client (`AsyncQdrantClient`) avoids event loop starvation. Seamless dual-mode: persistent on-disk storage (`./.qdrant_storage`) for the API server, and ephemeral in-memory storage (`:memory:`) for 5ms isolated test runs with zero file-lock collisions.
+  * *Sacrifice*: Requires explicit vector parameter schemas and payload indexing.
+* **Why Option B Won**: Eliminates file-lock collisions during concurrent test execution and provides non-blocking async throughput for FastAPI.
 
 ---
 
-## ADR-03: Deterministic Static AST Critic vs. "LLM-as-a-Judge"
-
-### Context & Failure Mode
-AI-generated code must be verified before being returned to users. Most tutorials use an LLM prompt as an evaluator (*"Judge if this code is modern Pydantic v2"*). LLMs are polite, stochastic, and hallucinate that broken code looks plausible.
-
-### Options Considered
-* **Option A (LLM-as-a-Judge)**: Non-deterministic, costs $0.02 and 2–4 seconds of latency per check, and hallucinates that legacy arguments like `@validator(pre=True)` are valid. **Rejected**.
-* **Option B (Deterministic Python AST Critic - CHOSEN)**: Native Python `ast.parse()` and `ast.NodeVisitor`.
-
-### Implementation
-In `src/core_agents/critic.py`:
-* **Zero Cost & Sub-Millisecond Speed**: Runs in `< 5ms` with **0 tokens consumed**.
-* **4 Programmatic Gates**:
-  1. *Gate 1 (AST Compilation)*: Validates clean syntax compilation.
-  2. *Gate 2 (Negative Scan)*: Zero legacy tokens allowed (`@validator`, `@root_validator`, inner `class Config:`, `.dict()`, `.json()`, `from pydantic import BaseSettings`, `@app.on_event`).
-  3. *Gate 3 (Positive Scan)*: Enforces required v2 constructs (`@field_validator` with `@classmethod`, `ConfigDict`, `SettingsConfigDict`, `model_dump()`).
-  4. *Gate 4 (Runtime Sandbox)*: Instantiates models in an isolated sandbox with dynamic module mocking (`_MockModuleFinder`) to catch execution errors without failing on missing 3rd-party dependencies.
+### ADR-03: Corpus Sourcing — Bundled Markdown Snapshots vs. Dynamic Web Scraping
+* **Context**: The RAG pipeline needs authoritative Pydantic v2 and FastAPI documentation.
+* **Option A (Dynamic runtime web scraping of documentation sites)**:
+  * *Gain*: Automatically tracks website changes.
+  * *Sacrifice*: Fragile (breaks on layout redesigns or network drops), introduces 2–3s network latency, and pollutes embeddings with HTML boilerplate (cookie banners, sidebars, navigation links).
+* **Option B (Bundled local Markdown snapshots from upstream GitHub — CHOSEN)**:
+  * *Gain*: 100% hermetic offline reproducibility, zero network dependency in CI/CD, sub-second ingestion, and clean text payloads.
+  * *Sacrifice*: Requires manual re-syncing when major upstream versions release.
+* **Why Option B Won**: Embedding purity and offline test reproducibility outweigh live web scraping.
 
 ---
 
-## ADR-04: Qdrant Dual-Mode vs. ChromaDB (The RocksDB Multi-Process Lock)
-
-### Context & Failure Mode
-Local AI development requires an embedded vector database that runs without Docker. ChromaDB uses an embedded RocksDB/SQLite storage engine. If a FastAPI server runs in Terminal A and holds the database directory open, running a test suite or ingestion script in Terminal B instantly crashes:
-`RuntimeError: Storage folder is already accessed by another instance.`
-
-### Options Considered
-* **Option A (ChromaDB)**: Synchronous SQLite engine stalls FastAPI's event loop; crashes under concurrent test/server processes. **Rejected**.
-* **Option B (Qdrant Dual-Mode - CHOSEN)**: Native Rust-backed vector store with non-blocking `AsyncQdrantClient`.
-
-### Implementation
-In `src/storage/qdrant_manager.py` and `copilot_api/main.py`:
-* **Development/Production**: Connects to `./.qdrant_storage` with single-process ownership managed by FastAPI's `@asynccontextmanager` lifespan.
-* **Hermetic Testing**: Automated tests initialize Qdrant in ephemeral memory (`:memory:`), guaranteeing zero lock collisions across parallel test workers.
-* **Automatic Fallback Guardrail**: If a scoped topic search yields a top similarity score `< 0.55`, the manager automatically drops the filter and searches globally, preventing false-negative silence.
+### ADR-04: Chunking Strategy — Custom State-Machine Chunker vs. Framework Splitters (LangChain)
+* **Context**: Technical documentation mixes explanatory prose with Python code blocks.
+* **Option A (Framework sliding character/token splitters, e.g., LangChain `RecursiveCharacterTextSplitter`)**:
+  * *Gain*: Single library import; zero custom parsing code.
+  * *Sacrifice*: Arbitrarily splits text every 500 characters, severing Python classes and functions mid-indentation and causing fatal `IndentationError` when retrieved into LLM prompts. Pulls 15+ heavy external dependencies.
+* **Option B (Custom `MarkdownHeaderChunker` — CHOSEN)**:
+  * *Gain*: ~75 lines of standard library Python (`re`, `dataclasses`). Slices strictly on Markdown headers (`##`, `###`) and enforces the **Atomic Code Rule** (fenced code blocks are indivisible units that are never split).
+  * *Sacrifice*: Requires maintaining custom parsing logic.
+* **Why Option B Won**: Code syntax integrity is non-negotiable in an automated code migration engine.
 
 ---
 
-## ADR-05: The 6-Question Minimal Spanning Basis
-
-### Context & Strategy
-Evaluating a code migration copilot by running 500 tests that all test `@validator` on different variable names burns 100x the tokens without providing any new architectural information.
-
-### The Decision
-In `docs/eval_decision.md` and `tests/evals/golden_fixtures.py`, we identified the **6 fundamental, mutually exclusive breaking changes** that span the entire migration space:
-1. `eval_01_config_dict`: Inner `class Config:` ➔ `model_config = ConfigDict(...)`
-2. `eval_02_field_validator`: `@validator` ➔ `@field_validator` with `@classmethod` and `mode='before'`
-3. `eval_03_model_validator`: Whole-model `@root_validator` ➔ `@model_validator`
-4. `eval_04_serialization`: `.dict()` / `.json()` ➔ `.model_dump()` / `.model_dump_json()`
-5. `eval_05_settings`: Package extraction ➔ `from pydantic_settings import BaseSettings, SettingsConfigDict`
-6. `eval_06_fastapi_lifespan`: Deprecated `@app.on_event` ➔ Modern `@asynccontextmanager` Lifespan
-
-If the Multi-Agent Supervisor-Critic passes these 6 orthogonal basis vectors, the system is fundamentally sound across all breaking interfaces.
+### ADR-05: Embedding Representation — Decoupled Storage vs. Raw Markdown Embeddings
+* **Context**: Migration documentation contrasts deprecated v1 patterns directly alongside modern v2 patterns.
+* **Option A (Embed raw markdown directly)**:
+  * *Gain*: Simple 1:1 mapping (one string per chunk).
+  * *Sacrifice*: Triggers the **Negation Trap**: sentences like *"WARNING: Do NOT use `@validator`"* poison vector centroids with legacy tokens, causing searches for legacy code to mistakenly retrieve negative warnings.
+* **Option B (Decoupled representation: `search_text` vs. `payload_content` — CHOSEN)**:
+  * *Gain*: `search_text` strips out legacy blocks and negative warnings, embedding ONLY target modern v2 signatures (clean vector centroid). `payload_content` preserves full Before/After context for the LLM.
+  * *Sacrifice*: Requires a two-pass extraction step during chunking.
+* **Why Option B Won**: Prevents deprecation warnings from corrupting vector similarity scores while ensuring the LLM receives complete explanatory context.
 
 ---
 
-## ADR-06: Dogfooding Pydantic v2 vs. Python `@dataclass`
-
-### Context & The Paradox
-Our copilot modernizes Pydantic code, but what should we use for our own internal agent data contracts (`DecomposedQuery`, `DocChunk`, `DraftResponse`)?
-* **The "Knife Sharpening a Knife" Paradox**: If our own code uses Pydantic, what if our agent accidentally generates v1 syntax in its own codebase?
-
-### Options Considered
-* **Option A (Built-in `@dataclass`)**: Immune to Pydantic breaking changes, but requires 100+ lines of manual serialization boilerplate and custom JSON schemas for LLM structured outputs. **Rejected**.
-* **Option B (Dogfooding Pydantic v2 - CHOSEN)**: Zero glue code. The Google GenAI SDK and Groq client natively accept Pydantic models for structured output (`response_schema`), and FastAPI routes validate payloads out-of-the-box.
-
-### Mitigation
-We permanently codified strict Pydantic v2 rules into `GEMINI.md` and project invariants, eliminating internal version drift.
-
----
-
-## ADR-07: Dual Embedder Protocol & Real Offline Cached Embeddings
-
-### Context & Sandbox Isolation
-We need 768-dimensional dense vector embeddings for Qdrant. Calling external APIs (Google GenAI) during automated tests introduces network latency, rate limits (`HTTP 429`), and fails in offline CI sandboxes. Downloading local HuggingFace models (~400MB) bloats dependencies.
-
-### Implementation
-In `src/storage/embedder.py`:
-* **`EmbedderProtocol`**: Defines a clean, uniform async interface.
-* **`GeminiEmbedder`**: Calls Google GenAI `text-embedding-004` (768-dim) in live environments.
-* **`CachedEmbedder`**: Operates against `src/storage/data/gemini_embeddings_cache.json`. Automated test suites execute against **100% real Google Gemini embeddings** completely offline in 0.005 seconds with zero network dependency.
-* **`DeterministicMockEmbedder`**: Generates SHA256 unit-normalized vectors for hermetic unit testing.
-
----
-
-## ADR-08: The "Ghost Ship" Disconnect Guardrail
-
-### Context & Token Waste
-In multi-agent systems, generating code across multiple iterations (`Decomposer ➔ Retriever ➔ Synthesizer ⟷ Critic`) takes compute time. If a user closes their browser tab or cancels a `curl` streaming request mid-flight, standard Python backends continue running the generator in the background, burning expensive cloud tokens for a client that is no longer listening.
-
-### Implementation
-In `src/copilot_api/routes.py`:
-* Before every compute-heavy stage, the Server-Sent Events (SSE) generator checks:
-  ```python
-  if await request.is_disconnected():
-      logger.info("Client disconnected. Aborting agent reflection loop to save tokens.")
-      return
-  ```
-* Wrapped within Python 3.12 `asyncio.TaskGroup`. When the client disconnects, child agent tasks are cleanly cancelled immediately.
+### ADR-06: Retrieval Strategy — Automatic Fallback Guardrail vs. Strict Metadata Filtering
+* **Context**: Retrieval precision improves when filtering vectors by topic (`pydantic_validators`, `pydantic_config`, etc.).
+* **Option A (Strict topic payload filtering)**:
+  * *Gain*: High precision within known categories.
+  * *Sacrifice*: The **False-Negative Trap**: if the Decomposer agent misclassifies a query due to vocabulary drift, the search returns 0 results and starves the Synthesizer of context.
+* **Option B (Filtered search with Automatic Fallback Guardrail at `score < 0.55` — CHOSEN)**:
+  * *Gain*: Searches topic aisles first. If top cosine similarity is `< 0.55` (doubtful match), the manager automatically drops the topic filter and runs a global dense search.
+  * *Sacrifice*: Adds a second search call (~5ms) when fallback triggers.
+* **Why Option B Won**: Preventing false-negative silence is worth the negligible ~5ms fallback search cost.
