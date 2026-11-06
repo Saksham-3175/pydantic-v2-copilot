@@ -158,5 +158,15 @@
     "pass_rate_percent": 100.0,
     "avg_iterations": 1.0,
     "total_duration_ms": 24637.15
+  },
+  {
+    "run_id": "run_20261106_181503_golden_benchmark",
+    "tag": "golden_benchmark",
+    "timestamp": "2026-11-06T18:15:03.697354+00:00",
+    "total_evals": 6,
+    "passed_evals": 6,
+    "pass_rate_percent": 100.0,
+    "avg_iterations": 1.0,
+    "total_duration_ms": 8591.93
   }
 ]
