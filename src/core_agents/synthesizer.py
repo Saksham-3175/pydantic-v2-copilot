@@ -33,6 +33,7 @@ class CodeSynthesizer:
     ) -> None:
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         self.model = model or "qwen/qwen3.8-27b"
+        self._custom_llm_client = llm_client is not None
         self.llm_client = llm_client or UnifiedLLMClient(
             groq_api_key=self.api_key,
             primary_model=self.model,
@@ -65,8 +66,8 @@ class CodeSynthesizer:
                 iteration=iteration,
             )
 
-        # 1. Try unified LLM client if API key configured or mock client attached
-        if self.api_key or self._legacy_client is not None:
+        # 1. Try unified LLM client if API key configured, custom client injected, or mock client attached
+        if self.api_key or self._custom_llm_client or self._legacy_client is not None:
             pruned_chunks = context_chunks[:2]
             docs_text = "\n\n---\n\n".join(
                 [f"### {c.breadcrumb}\n{_prune_chunk_content(c.content)}" for c in pruned_chunks]
