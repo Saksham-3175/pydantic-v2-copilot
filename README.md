@@ -131,3 +131,21 @@ curl -N -X POST http://localhost:8000/v1/migrate/stream \
   -H "Content-Type: application/json" \
   -d '{"code": "class User(BaseModel):\n    class Config:\n        orm_mode = True"}'
 ```
+
+---
+
+## 7. Known Limitations & Roadmap
+
+### Known Limitations (MVP Boundaries)
+* **Single-File Scoping**: Modernization operates on a per-file basis. Cross-module call graph resolution (e.g., a model defined in `models/` whose `.dict()` call site is in a distant `api/` package) is evaluated per file rather than through a global AST dependency graph.
+* **Minimal Spanning Basis**: Focuses specifically on the 6 canonical breaking changes. Advanced edge cases like `GenericModel` deprecation or runtime `create_model()` metaprogramming are queued for future releases.
+* **Dynamic Metaprogramming**: Dynamic Python patterns like `getattr(obj, "dict")()` or string `eval()` cannot be inspected by static AST visitors.
+* **Git Dependency for Reverts**: The automatic rollback guardrail requires the target directory to be tracked in a Git repository with clean working status before running `--write`.
+
+### Upcoming Roadmap
+- [ ] **Pre-Commit Hook Support**: Native `.pre-commit-hooks.yaml` integration to block legacy Pydantic v1 tokens in CI (`copilot scan --strict`).
+- [ ] **Cross-File Symbol Graph**: Workspace-wide AST symbol indexing to modernize call sites across routers and business services.
+- [ ] **`GenericModel` Modernization**: Automated migration from deprecated `GenericModel` to standard PEP 585 `BaseModel[T]`.
+- [ ] **Interactive Terminal Diff Reviewer (TUI)**: Split-pane interactive terminal UI to review, accept, or reject individual modernization chunks.
+- [ ] **Concurrent Worker Pool**: Multiprocessing engine for instantaneous screening and migration across massive mono-repos (5,000+ files).
+
