@@ -17,9 +17,12 @@ class QueryDecomposer:
         llm_client: typing.Optional[UnifiedLLMClient] = None,
         api_key: typing.Optional[str] = None,
         model: typing.Optional[str] = None,
+        enable_llm: bool = False,
     ) -> None:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self.model = model or "qwen/qwen3.8-27b"
+        self._custom_llm_client = llm_client is not None
+        self.enable_llm = enable_llm
         self.llm_client = llm_client or UnifiedLLMClient(
             gemini_api_key=self.api_key,
             primary_model=self.model,
@@ -39,8 +42,8 @@ class QueryDecomposer:
         """Decompose legacy code snippet into detected topics and search sub-queries.
 
         Handles:
-        - Primary Groq LLM execution with automatic Gemini failover via UnifiedLLMClient.
-        - Deterministic offline heuristic fallback for tests/offline environments.
+        - Deterministic zero-token AST decomposition (0 tokens, saves ~1,200 Groq tokens per file).
+        - Optional custom mock/client execution if explicitly injected (e.g. unit tests).
         """
         code_clean = code.strip()
         # Edge Case 1: Empty or whitespace-only code
@@ -51,26 +54,45 @@ class QueryDecomposer:
                 sub_queries=[],
             )
 
-        # 1. Try unified LLM client if configured or mock client attached
-        prompt = (
-            "Analyze the following Python code for legacy Pydantic v1 or legacy FastAPI patterns. "
-            "Extract the migration topics (e.g. 'pydantic_validators', 'pydantic_config', "
-            "'pydantic_model_validators', 'pydantic_serialization', 'pydantic_settings', "
-            "'fastapi_lifespan', 'fastapi_dependencies') and generate specific search queries.\n\n"
-            f"```python\n{code_clean}\n```"
-        )
-        try:
-            result, _ = await self.llm_client.generate_structured(
-                prompt=prompt,
-                schema=DecomposedQuery,
-                system_instruction="Analyze Python code and extract migration topics as JSON.",
-            )
-            return result
-        except Exception:
-            # Fallback to heuristic parser on network/API failure
-            pass
+        # If a custom legacy client (mock) was attached, call it directly
+        if self._legacy_client is not None:
+            try:
+                from google.genai import types
 
-        # 2. Heuristic offline decomposition (for fast hermetic testing & offline mode)
+                config = types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=DecomposedQuery,
+                )
+                resp = await self._legacy_client.aio.models.generate_content(
+                    model=self.model,
+                    contents=code_clean,
+                    config=config,
+                )
+                if resp.text:
+                    return DecomposedQuery.model_validate_json(resp.text)
+            except Exception:
+                pass
+
+        # If a custom LLM client/mock was injected or enable_llm requested, use LLM
+        if self._custom_llm_client or self.enable_llm:
+            prompt = (
+                "Analyze the following Python code for legacy Pydantic v1 or legacy FastAPI patterns. "
+                "Extract the migration topics (e.g. 'pydantic_validators', 'pydantic_config', "
+                "'pydantic_model_validators', 'pydantic_serialization', 'pydantic_settings', "
+                "'fastapi_lifespan', 'fastapi_dependencies') and generate specific search queries.\n\n"
+                f"```python\n{code_clean}\n```"
+            )
+            try:
+                result, _ = await self.llm_client.generate_structured(
+                    prompt=prompt,
+                    schema=DecomposedQuery,
+                    system_instruction="Analyze Python code and extract migration topics as JSON.",
+                )
+                return result
+            except Exception:
+                pass
+
+        # Zero-token deterministic decomposition (bypasses LLM, eliminating rate limits)
         return self._heuristic_decompose(code_clean)
 
     def _heuristic_decompose(self, code: str) -> DecomposedQuery:

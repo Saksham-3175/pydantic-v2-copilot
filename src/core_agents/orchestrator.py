@@ -138,3 +138,141 @@ class MigrationOrchestrator:
             total_iterations=limit,
             fallback_used=False,
         )
+
+    async def migrate_stream(
+        self,
+        legacy_code: str,
+        max_iterations: typing.Optional[int] = None,
+        is_cancelled: typing.Optional[typing.Callable[[], typing.Awaitable[bool]]] = None,
+    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
+        """Stream migration stages as asynchronous event dictionaries."""
+        if is_cancelled and await is_cancelled():
+            return
+
+        # 1. start
+        yield {
+            "stage": "start",
+            "message": "Starting migration analysis and modernization",
+        }
+
+        # Edge case: empty or whitespace-only code
+        if not legacy_code or not legacy_code.strip():
+            empty_result = VerifiedMigrationResult(
+                original_code=legacy_code or "",
+                modern_code="",
+                explanation="No code provided to modernize.",
+                changes_made=[],
+                verdict=CriticVerdict(passed=True, failures=[], suggested_fixes=[]),
+                total_iterations=1,
+                fallback_used=False,
+            )
+            yield {
+                "stage": "done",
+                "result": empty_result.model_dump(),
+                "modern_code": empty_result.modern_code,
+                "passed": empty_result.verdict.passed,
+            }
+            return
+
+        if is_cancelled and await is_cancelled():
+            return
+
+        # 2. Decompose
+        decomposed = await self.decomposer.decompose(legacy_code)
+        yield {
+            "stage": "decomposed",
+            "summary": decomposed.summary,
+            "detected_topics": decomposed.detected_topics,
+            "sub_queries": decomposed.sub_queries,
+            "data": decomposed.model_dump(),
+        }
+
+        if is_cancelled and await is_cancelled():
+            return
+
+        # 3. Retrieve
+        chunks: list[DocChunkPayload] = []
+        if self.retriever is not None:
+            chunks = await self.retriever.retrieve(decomposed)
+        yield {
+            "stage": "retrieved",
+            "count": len(chunks),
+            "chunks": [c.model_dump() for c in chunks],
+        }
+
+        # 4. Reflection Loop
+        limit = max_iterations if max_iterations is not None else self.max_iterations
+        limit = max(1, limit)
+
+        feedback: typing.Optional[str] = None
+        last_draft: typing.Optional[DraftResponse] = None
+        last_verdict: typing.Optional[CriticVerdict] = None
+
+        for iteration in range(1, limit + 1):
+            if is_cancelled and await is_cancelled():
+                return
+
+            yield {
+                "stage": "synthesizing",
+                "iteration": iteration,
+            }
+
+            draft = await self.synthesizer.synthesize(
+                legacy_code=legacy_code,
+                context_chunks=chunks,
+                feedback=feedback,
+                iteration=iteration,
+            )
+            last_draft = draft
+
+            if is_cancelled and await is_cancelled():
+                return
+
+            verdict = self._verify_code(draft.modern_code)
+            last_verdict = verdict
+
+            yield {
+                "stage": "critic_verification",
+                "iteration": iteration,
+                "passed": verdict.passed,
+                "verdict": verdict.model_dump(),
+            }
+
+            if verdict.passed:
+                final_result = VerifiedMigrationResult(
+                    original_code=legacy_code,
+                    modern_code=draft.modern_code,
+                    explanation=draft.explanation,
+                    changes_made=draft.changes_made,
+                    verdict=verdict,
+                    total_iterations=iteration,
+                    fallback_used=False,
+                )
+                yield {
+                    "stage": "done",
+                    "result": final_result.model_dump(),
+                    "modern_code": draft.modern_code,
+                    "passed": True,
+                }
+                return
+
+            feedback = self._construct_feedback(verdict)
+
+        # Loop exhausted without passing
+        final_result = VerifiedMigrationResult(
+            original_code=legacy_code,
+            modern_code=last_draft.modern_code if last_draft else legacy_code,
+            explanation=last_draft.explanation if last_draft else "Migration failed to pass verification.",
+            changes_made=last_draft.changes_made if last_draft else [],
+            verdict=last_verdict
+            if last_verdict is not None
+            else CriticVerdict(passed=False, failures=[], suggested_fixes=[]),
+            total_iterations=limit,
+            fallback_used=False,
+        )
+        yield {
+            "stage": "done",
+            "result": final_result.model_dump(),
+            "modern_code": final_result.modern_code,
+            "passed": False,
+        }

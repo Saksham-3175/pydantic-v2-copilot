@@ -11,6 +11,17 @@ from core_agents.llm import UnifiedLLMClient
 from core_agents.schemas import DocChunkPayload, DraftResponse
 
 
+def _prune_chunk_content(content: str, max_chars: int = 1200) -> str:
+    """Trim verbose documentation content to stay well under LLM token limits while preserving code blocks."""
+    if len(content) <= max_chars:
+        return content
+    trimmed = content[:max_chars]
+    last_newline = trimmed.rfind("\n")
+    if last_newline > max_chars // 2:
+        trimmed = trimmed[:last_newline]
+    return trimmed + "\n... [truncated for token efficiency]"
+
+
 class CodeSynthesizer:
     """Agent that synthesizes modern Pydantic v2 code using unified LLM client (Groq primary, Gemini fallback)."""
 
@@ -54,44 +65,48 @@ class CodeSynthesizer:
                 iteration=iteration,
             )
 
-        # 1. Try unified LLM client (Groq primary, Gemini fallback)
-        docs_text = "\n\n---\n\n".join([f"### {c.breadcrumb}\n{c.content}" for c in context_chunks])
-        feedback_prompt = (
-            f"\n\nCRITICAL FIXES REQUIRED FROM PREVIOUS ATTEMPT:\n{feedback}\nYou MUST resolve every failure noted above."
-            if feedback
-            else ""
-        )
-
-        system_msg = (
-            "You are an expert Python engineer modernizing legacy Pydantic v1 code to strict Pydantic v2 standards. "
-            "Rules to strictly enforce:\n"
-            "1. Replace @validator with @field_validator and ALWAYS include @classmethod decorator.\n"
-            "2. Replace inner class Config with model_config = ConfigDict(...).\n"
-            "3. Replace @root_validator with @model_validator(mode='before' or 'after').\n"
-            "4. Replace .dict() with .model_dump() and .json() with .model_dump_json().\n"
-            "5. Replace BaseSettings from pydantic with from pydantic_settings import BaseSettings, SettingsConfigDict.\n"
-            "6. Replace @app.on_event with @asynccontextmanager lifespan.\n"
-            'Return JSON matching: {"modern_code": "...", "explanation": "...", "changes_made": ["..."]}'
-        )
-
-        user_msg = (
-            f"REFERENCE DOCUMENTATION:\n{docs_text}\n\n"
-            f"LEGACY CODE TO MODERNIZE:\n```python\n{code_clean}\n```"
-            f"{feedback_prompt}\n\n"
-            "Produce the modern Pydantic v2 implementation as valid JSON."
-        )
-
-        try:
-            draft, _ = await self.llm_client.generate_structured(
-                prompt=user_msg,
-                schema=DraftResponse,
-                system_instruction=system_msg,
+        # 1. Try unified LLM client if API key configured or mock client attached
+        if self.api_key or self._legacy_client is not None:
+            pruned_chunks = context_chunks[:2]
+            docs_text = "\n\n---\n\n".join(
+                [f"### {c.breadcrumb}\n{_prune_chunk_content(c.content)}" for c in pruned_chunks]
             )
-            draft.iteration = iteration
-            return draft
-        except Exception:
-            # Fallback to deterministic offline synthesizer on error/offline
-            pass
+            feedback_prompt = (
+                f"\n\nCRITICAL FIXES REQUIRED FROM PREVIOUS ATTEMPT:\n{feedback}\nYou MUST resolve every failure noted above."
+                if feedback
+                else ""
+            )
+
+            system_msg = (
+                "You are an expert Python engineer modernizing legacy Pydantic v1 code to strict Pydantic v2 standards. "
+                "Rules to strictly enforce:\n"
+                "1. Replace @validator with @field_validator and ALWAYS include @classmethod decorator.\n"
+                "2. Replace inner class Config with model_config = ConfigDict(...).\n"
+                "3. Replace @root_validator with @model_validator(mode='before' or 'after').\n"
+                "4. Replace .dict() with .model_dump() and .json() with .model_dump_json().\n"
+                "5. Replace BaseSettings from pydantic with from pydantic_settings import BaseSettings, SettingsConfigDict.\n"
+                "6. Replace @app.on_event with @asynccontextmanager lifespan.\n"
+                'Return JSON matching: {"modern_code": "...", "explanation": "...", "changes_made": ["..."]}'
+            )
+
+            user_msg = (
+                f"REFERENCE DOCUMENTATION:\n{docs_text}\n\n"
+                f"LEGACY CODE TO MODERNIZE:\n```python\n{code_clean}\n```"
+                f"{feedback_prompt}\n\n"
+                "Produce the modern Pydantic v2 implementation as valid JSON."
+            )
+
+            try:
+                draft, _ = await self.llm_client.generate_structured(
+                    prompt=user_msg,
+                    schema=DraftResponse,
+                    system_instruction=system_msg,
+                )
+                draft.iteration = iteration
+                return draft
+            except Exception:
+                # Fallback to deterministic offline synthesizer on error/offline
+                pass
 
         # 2. Deterministic offline synthesizer (for hermetic testing)
         return self._heuristic_synthesize(code_clean, context_chunks, feedback, iteration)
@@ -160,10 +175,10 @@ class CodeSynthesizer:
         # ---------------------------------------------------------------------
         # 3. ConfigDict / SettingsConfigDict (inner class Config: removal)
         # ---------------------------------------------------------------------
-        if "class Config:" in modern:
+        if re.search(r"class Config(?:\([^)]*\))?:", modern):
             need_config_dict_import = (not is_settings) and ("ConfigDict" not in modern)
             config_cls = "SettingsConfigDict" if is_settings else "ConfigDict"
-            config_pattern = re.compile(r"([ \t]*)class Config:\n((?:\1[ \t]+[^\n]+\n*)+)")
+            config_pattern = re.compile(r"([ \t]*)class Config(?:\([^)]*\))?:\n((?:\1[ \t]+[^\n]+\n*)+)")
             match = config_pattern.search(modern)
             if match:
                 indent = match.group(1)
@@ -180,7 +195,11 @@ class CodeSynthesizer:
                         elif k == "allow_mutation":
                             k = "frozen"
                             v = "True" if v.lower() == "false" else "False"
+                        elif k == "allow_population_by_field_name":
+                            k = "populate_by_name"
                         attrs.append(f"{k}={v}")
+                if config_cls == "SettingsConfigDict" and not any(a.startswith("extra=") for a in attrs):
+                    attrs.append('extra="ignore"')
                 args_str = ", ".join(attrs)
                 modern = (
                     modern[: match.start()]
@@ -189,11 +208,11 @@ class CodeSynthesizer:
                 )
             else:
                 modern = re.sub(
-                    r"class Config:\s+([a-zA-Z_0-9]+)\s*=\s*([^\n]+)",
+                    r"class Config(?:\([^)]*\))?:\s+([a-zA-Z_0-9]+)\s*=\s*([^\n]+)",
                     rf"model_config = {config_cls}(\1=\2)",
                     modern,
                 )
-                modern = re.sub(r"class Config:.*", rf"model_config = {config_cls}()", modern)
+                modern = re.sub(r"class Config(?:\([^)]*\))?:.*", rf"model_config = {config_cls}()", modern)
 
             if need_config_dict_import:
                 if "from pydantic import " in modern:

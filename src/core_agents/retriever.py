@@ -17,7 +17,8 @@ class ScopedRetriever:
     async def retrieve(
         self,
         decomposed: DecomposedQuery,
-        limit_per_topic: int = 2,
+        limit_per_topic: int = 1,
+        max_total_chunks: int = 2,
     ) -> list[DocChunkPayload]:
         """Fetch targeted documentation chunks with deduplication and edge case handling."""
         # Edge Case 1: Empty decomposed query (no topics or sub-queries)
@@ -54,7 +55,10 @@ class ScopedRetriever:
                 )
                 all_scored_chunks.extend(results)
 
-        # Edge Case 2: Deduplicate chunks by chunk_id
+        # Sort all chunks by descending score for maximum relevance
+        all_scored_chunks.sort(key=lambda x: x.score, reverse=True)
+
+        # Edge Case 2: Deduplicate chunks by chunk_id and cap total chunks to prevent token bloat
         seen_ids: set[str] = set()
         deduped_payloads: list[DocChunkPayload] = []
 
@@ -70,5 +74,7 @@ class ScopedRetriever:
                         score=item.score,
                     )
                 )
+                if len(deduped_payloads) >= max_total_chunks:
+                    break
 
         return deduped_payloads

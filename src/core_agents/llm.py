@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -10,7 +11,27 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+try:
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True))
+except Exception:
+    pass
+
 T = typing.TypeVar("T", bound=BaseModel)
+
+
+def _format_clean_error(provider: str, exc: Exception) -> str:
+    err_str = str(exc)
+    if "429" in err_str or "rate_limit" in err_str.lower():
+        return f"{provider} rate limit reached (429)"
+    elif "503" in err_str or "unavailable" in err_str.lower():
+        return f"{provider} service unavailable (503)"
+    elif "TimeoutError" in type(exc).__name__ or "timeout" in err_str.lower():
+        return f"{provider} request timed out (>5s)"
+    elif "connection" in err_str.lower() or "connect" in err_str.lower() or "name resolution" in err_str.lower():
+        return f"{provider} connection offline"
+    return f"{provider} API unavailable"
 
 
 class UnifiedLLMClient:
@@ -21,22 +42,10 @@ class UnifiedLLMClient:
         groq_api_key: typing.Optional[str] = None,
         gemini_api_key: typing.Optional[str] = None,
         primary_model: str = "qwen/qwen3.8-27b",
-        secondary_model: str = "gemini-3.8-flash",
+        secondary_model: str = "gemini-2.5-flash",
     ) -> None:
-        groq_key = groq_api_key or os.environ.get("GROQ_API_KEY")
-        gemini_key = gemini_api_key or os.environ.get("GEMINI_API_KEY")
-        if not (groq_key and gemini_key):
-            try:
-                from dotenv import find_dotenv, load_dotenv
-
-                load_dotenv(find_dotenv(usecwd=True))
-                groq_key = groq_key or os.environ.get("GROQ_API_KEY")
-                gemini_key = gemini_key or os.environ.get("GEMINI_API_KEY")
-            except Exception:
-                pass
-
-        self.groq_api_key = groq_key
-        self.gemini_api_key = gemini_key
+        self.groq_api_key = groq_api_key or os.environ.get("GROQ_API_KEY")
+        self.gemini_api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY")
         self.primary_model = primary_model
         self.secondary_model = secondary_model
 
@@ -100,17 +109,21 @@ class UnifiedLLMClient:
                 )
                 messages.append({"role": "user", "content": user_msg})
 
-                resp = await self._groq_client.chat.completions.create(
-                    model=self.primary_model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    temperature=0.1,
+                resp = await asyncio.wait_for(
+                    self._groq_client.chat.completions.create(
+                        model=self.primary_model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        temperature=0.1,
+                    ),
+                    timeout=5.0,
                 )
                 content = resp.choices[0].message.content or "{}"
                 return schema.model_validate_json(content), "groq"
             except Exception as e:
-                logger.warning(f"Primary provider (Groq) failed: {e}. Falling back to Gemini...")
-                errors.append(f"Groq error: {e}")
+                clean_msg = _format_clean_error("Groq", e)
+                print(f"\033[2minfo: {clean_msg}, failing over to Gemini...\033[0m")
+                errors.append(clean_msg)
 
         # 2. Secondary Fallback: Gemini API
         if self._gemini_client and (self.gemini_api_key or os.environ.get("GEMINI_API_KEY")):
@@ -125,15 +138,19 @@ class UnifiedLLMClient:
                 if system_instruction:
                     config.system_instruction = system_instruction
 
-                resp = await self._gemini_client.aio.models.generate_content(
-                    model=self.secondary_model,
-                    contents=prompt,
-                    config=config,
+                resp = await asyncio.wait_for(
+                    self._gemini_client.aio.models.generate_content(
+                        model=self.secondary_model,
+                        contents=prompt,
+                        config=config,
+                    ),
+                    timeout=5.0,
                 )
                 if resp.text:
                     return schema.model_validate_json(resp.text), "gemini"
             except Exception as e:
-                logger.warning(f"Secondary provider (Gemini) failed: {e}.")
-                errors.append(f"Gemini error: {e}")
+                clean_msg = _format_clean_error("Gemini", e)
+                print(f"\033[2minfo: {clean_msg}, failing over to local AST engine...\033[0m")
+                errors.append(clean_msg)
 
         raise RuntimeError(f"All LLM providers failed or unconfigured: {'; '.join(errors)}")

@@ -43,3 +43,9 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Cloned external test repositories
+examples/fastapi_realworld_repo/
+
+# Copilot cache
+.copilot_cache/

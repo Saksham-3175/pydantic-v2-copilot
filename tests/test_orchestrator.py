@@ -305,3 +305,54 @@ def test_orchestrator_feedback_formatting() -> None:
     assert "`user.dict()`" in feedback
     assert "Suggested Fixes:" in feedback
     assert "Replace .dict() with .model_dump()" in feedback
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_migrate_stream_events() -> None:
+    """Verifies that migrate_stream yields standard migration lifecycle events."""
+    mock_decomposer = AsyncMock()
+    mock_decomposer.decompose.return_value = DecomposedQuery(
+        summary="Test summary",
+        detected_topics=["pydantic_config"],
+        sub_queries=["ConfigDict"],
+    )
+
+    mock_retriever = AsyncMock()
+    mock_retriever.retrieve.return_value = [
+        DocChunkPayload(
+            chunk_id="c1",
+            topic="pydantic_config",
+            breadcrumb="ConfigDict",
+            content="Use ConfigDict",
+        )
+    ]
+
+    mock_synthesizer = AsyncMock()
+    mock_synthesizer.synthesize.return_value = DraftResponse(
+        modern_code="from pydantic import BaseModel, ConfigDict\n\nclass User(BaseModel):\n    model_config = ConfigDict(frozen=True)\n",
+        explanation="Modernized Config",
+        changes_made=["ConfigDict"],
+        iteration=1,
+    )
+
+    orchestrator = MigrationOrchestrator(
+        decomposer=mock_decomposer,
+        retriever=mock_retriever,
+        synthesizer=mock_synthesizer,
+        critic=ASTCritic(),
+        max_iterations=2,
+    )
+
+    events = []
+    async for event in orchestrator.migrate_stream("class User(BaseModel):\n    class Config:\n        allow_mutation = False\n"):
+        events.append(event)
+
+    stages = [e["stage"] for e in events]
+    assert "start" in stages
+    assert "decomposed" in stages
+    assert "retrieved" in stages
+    assert "synthesizing" in stages
+    assert "critic_verification" in stages
+    assert "done" in stages
+    assert events[-1]["passed"] is True
+

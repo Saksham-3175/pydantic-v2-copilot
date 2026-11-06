@@ -1,0 +1,22 @@
+{
+  "run_id": "run_20261106_140349_golden_benchmark",
+  "eval_id": "eval_02_field_validator",
+  "topic": "pydantic_validators",
+  "timestamp": "2026-11-06T14:03:54.946024+00:00",
+  "passed": true,
+  "iterations_used": 1,
+  "duration_ms": 2738.55,
+  "legacy_input_code": "from pydantic import BaseModel, validator\n\nclass UserModel(BaseModel):\n    name: str\n\n    @validator('name', pre=True)\n    def check_name(cls, v):\n        return v.strip().title()\n",
+  "modern_output_code": "from pydantic import BaseModel, field_validator\n\nclass UserModel(BaseModel):\n    name: str\n\n    @field_validator('name', mode='before')\n    @classmethod\n    def check_name(cls, v):\n        return v.strip().title()",
+  "critic_verdict": {
+    "passed": true,
+    "failures": [],
+    "suggested_fixes": []
+  },
+  "gates_verified": {
+    "gate_1_ast_syntax": true,
+    "gate_2_negative_invariants": true,
+    "gate_3_positive_invariants": true,
+    "gate_4_runtime_sandbox": true
+  }
+}
