@@ -12,9 +12,9 @@ Combines **Deterministic Python AST Screening**, **Scoped Vector Retrieval (Qdra
 Install globally into your system `$PATH` using Astral `uv`:
 
 ```bash
-uv tool install git+https://github.com/Saksham-3175/pydantic-v2-copilot.git
+uv tool install git+https://github.com/gradient-ghost/pydantic-v2-copilot.git
 ```
-*(Or install inside an active virtual environment via `pip install git+https://github.com/Saksham-3175/pydantic-v2-copilot.git`)*
+*(Or install inside an active virtual environment via `pip install git+https://github.com/gradient-ghost/pydantic-v2-copilot.git`)*
 
 ### CLI Usage
 
