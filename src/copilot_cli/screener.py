@@ -17,6 +17,9 @@ STAGE_1_MARKERS: tuple[str, ...] = (
     "BaseSettings",
     ".dict(",
     ".json(",
+    ".from_orm(",
+    ".parse_obj(",
+    ".copy(",
     "on_event",
     "regex=",
 )
@@ -26,6 +29,7 @@ PATTERN_CLASS_CONFIG = "class_config"
 PATTERN_VALIDATOR = "validator"
 PATTERN_ROOT_VALIDATOR = "root_validator"
 PATTERN_LEGACY_EXPORT = "legacy_export"
+PATTERN_LEGACY_CONSUMER = "legacy_consumer"
 PATTERN_BASE_SETTINGS = "base_settings"
 PATTERN_ON_EVENT = "on_event"
 PATTERN_FIELD_REGEX = "field_regex"
@@ -197,6 +201,38 @@ class _LegacyPatternVisitor(ast.NodeVisitor):
                 )
             )
 
+        # Legacy consumer method calls: .from_orm() or .parse_obj()
+        if isinstance(node.func, ast.Attribute) and node.func.attr in ("from_orm", "parse_obj"):
+            attr_name = node.func.attr
+            self.matches.append(
+                PatternMatch(
+                    line=node.lineno,
+                    pattern_type=PATTERN_LEGACY_CONSUMER,
+                    description=f"Legacy consumer method '.{attr_name}()' is deprecated in Pydantic v2. Use '.model_validate()' instead.",
+                    snippet=self._get_snippet(node.lineno),
+                )
+            )
+
+        # Legacy copy call on model instances: .copy(...)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "copy":
+            is_model_copy = bool(node.keywords) or bool(node.args)
+            if not is_model_copy and isinstance(node.func.value, ast.Name):
+                name_lower = node.func.value.id.lower()
+                if any(
+                    term in name_lower
+                    for term in ("model", "schema", "user", "item", "record", "entity", "payload", "instance", "obj")
+                ):
+                    is_model_copy = True
+            if is_model_copy:
+                self.matches.append(
+                    PatternMatch(
+                        line=node.lineno,
+                        pattern_type=PATTERN_LEGACY_CONSUMER,
+                        description="Legacy method '.copy()' on model instances is deprecated in Pydantic v2. Use '.model_copy()' instead.",
+                        snippet=self._get_snippet(node.lineno),
+                    )
+                )
+
         # Field regex: Field(..., regex=...)
         is_field_call = False
         if isinstance(node.func, ast.Name) and node.func.id == "Field":
@@ -350,6 +386,7 @@ __all__ = [
     "PATTERN_VALIDATOR",
     "PATTERN_ROOT_VALIDATOR",
     "PATTERN_LEGACY_EXPORT",
+    "PATTERN_LEGACY_CONSUMER",
     "PATTERN_BASE_SETTINGS",
     "PATTERN_ON_EVENT",
     "PATTERN_FIELD_REGEX",

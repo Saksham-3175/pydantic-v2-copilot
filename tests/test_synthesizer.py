@@ -190,3 +190,20 @@ async def test_synthesizer_groq_api_mock_execution() -> None:
     assert call_kwargs["model"] == "qwen/qwen3.8-27b"
     assert call_kwargs["response_format"] == {"type": "json_object"}
     assert any("Missing ConfigDict" in m["content"] for m in call_kwargs["messages"])
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_legacy_consumer_methods(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests heuristic transformation of .from_orm(), .parse_obj(), and .copy(update=...)."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    synthesizer = CodeSynthesizer(api_key=None)
+
+    legacy_code = """
+user = User.from_orm(db_row)
+item = Item.parse_obj(payload)
+new_user = user.copy(update={"name": "Bob"})
+"""
+    result = await synthesizer.synthesize(legacy_code, [])
+    assert "User.model_validate(db_row)" in result.modern_code
+    assert "Item.model_validate(payload)" in result.modern_code
+    assert 'user.model_copy(update={"name": "Bob"})' in result.modern_code

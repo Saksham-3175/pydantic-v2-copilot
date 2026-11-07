@@ -11,6 +11,7 @@ from copilot_cli.screener import (
     PATTERN_BASE_SETTINGS,
     PATTERN_CLASS_CONFIG,
     PATTERN_FIELD_REGEX,
+    PATTERN_LEGACY_CONSUMER,
     PATTERN_LEGACY_EXPORT,
     PATTERN_ON_EVENT,
     PATTERN_ROOT_VALIDATOR,
@@ -399,3 +400,20 @@ def test_scan_directory_with_clean_and_legacy_and_ignored(tmp_path: Path):
     non_rec_results = scan_directory(tmp_path, recursive=False)
     non_rec_filenames = [r.file_path.name for r in non_rec_results]
     assert sorted(non_rec_filenames) == ["helpers.py", "user.py"]
+
+
+def test_detect_legacy_consumer_methods():
+    """Detects .from_orm(), .parse_obj(), and model .copy(update=...)."""
+    code = """
+user = User.from_orm(db_user)
+item = Item.parse_obj(payload)
+updated_user = user.copy(update={"name": "Alice"})
+"""
+    result = scan_code(code)
+    assert result.has_legacy_patterns is True
+    assert len(result.matches) == 3
+    for m in result.matches:
+        assert m.pattern_type == PATTERN_LEGACY_CONSUMER
+    assert ".from_orm()" in result.matches[0].description
+    assert ".parse_obj()" in result.matches[1].description
+    assert ".copy()" in result.matches[2].description

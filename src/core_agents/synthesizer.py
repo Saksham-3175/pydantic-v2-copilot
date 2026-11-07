@@ -87,6 +87,7 @@ class CodeSynthesizer:
                 "4. Replace .dict() with .model_dump() and .json() with .model_dump_json().\n"
                 "5. Replace BaseSettings from pydantic with from pydantic_settings import BaseSettings, SettingsConfigDict.\n"
                 "6. Replace @app.on_event with @asynccontextmanager lifespan.\n"
+                "7. Replace .from_orm(...) and .parse_obj(...) with .model_validate(...), and .copy(update=...) with .model_copy(update=...).\n"
                 'Return JSON matching: {"modern_code": "...", "explanation": "...", "changes_made": ["..."]}'
             )
 
@@ -123,10 +124,20 @@ class CodeSynthesizer:
         modern = code
         changes: list[str] = []
 
-        # If feedback mentions dict(), replace it based on Critic feedback
-        if feedback and (".dict()" in feedback or "dict" in feedback.lower()):
-            modern = re.sub(r"\.dict\(", ".model_dump(", modern)
-            changes.append("Replaced .dict() with .model_dump() based on Critic feedback")
+        # If feedback mentions dict(), from_orm(), parse_obj(), or copy(), replace based on Critic feedback
+        if feedback:
+            if ".dict()" in feedback or "dict" in feedback.lower():
+                modern = re.sub(r"\.dict\(", ".model_dump(", modern)
+                changes.append("Replaced .dict() with .model_dump() based on Critic feedback")
+            if "from_orm" in feedback:
+                modern = re.sub(r"\.from_orm\(", ".model_validate(", modern)
+                changes.append("Replaced .from_orm() with .model_validate() based on Critic feedback")
+            if "parse_obj" in feedback:
+                modern = re.sub(r"\.parse_obj\(", ".model_validate(", modern)
+                changes.append("Replaced .parse_obj() with .model_validate() based on Critic feedback")
+            if ".copy(" in feedback or "copy" in feedback.lower():
+                modern = re.sub(r"\.copy\(", ".model_copy(", modern)
+                changes.append("Replaced .copy() with .model_copy() based on Critic feedback")
 
         # ---------------------------------------------------------------------
         # 1. FastAPI Lifespan (@app.on_event -> lifespan contextmanager)
@@ -276,6 +287,19 @@ class CodeSynthesizer:
         if ".json(" in modern:
             modern = re.sub(r"\.json\(", ".model_dump_json(", modern)
             changes.append("Replaced .json() with .model_dump_json()")
+
+        # ---------------------------------------------------------------------
+        # 7. Legacy Consumer Call-sites (.from_orm(), .parse_obj(), .copy())
+        # ---------------------------------------------------------------------
+        if ".from_orm(" in modern:
+            modern = re.sub(r"\.from_orm\(", ".model_validate(", modern)
+            changes.append("Replaced .from_orm() with .model_validate()")
+        if ".parse_obj(" in modern:
+            modern = re.sub(r"\.parse_obj\(", ".model_validate(", modern)
+            changes.append("Replaced .parse_obj() with .model_validate()")
+        if ".copy(" in modern:
+            modern = re.sub(r"\.copy\(", ".model_copy(", modern)
+            changes.append("Replaced .copy() with .model_copy()")
 
         # Clean duplicate import lines if any
         lines = modern.splitlines()

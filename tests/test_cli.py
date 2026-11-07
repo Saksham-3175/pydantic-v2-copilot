@@ -22,6 +22,19 @@ def test_cli_version() -> None:
     assert "Decomposer" in result.stdout
 
 
+def test_cli_root_version_flags() -> None:
+    """Verifies copilot --version and copilot -v display architectural info and LLM configuration."""
+    res_long = runner.invoke(app, ["--version"])
+    assert res_long.exit_code == 0
+    assert "0.1.0" in res_long.stdout
+    assert "Deterministic Critic" in res_long.stdout
+
+    res_short = runner.invoke(app, ["-v"])
+    assert res_short.exit_code == 0
+    assert "0.1.0" in res_short.stdout
+    assert "Deterministic Critic" in res_short.stdout
+
+
 def test_cli_scan_clean_directory(tmp_path: Path) -> None:
     """Verifies copilot scan reports clean files without legacy tokens."""
     clean_file = tmp_path / "utils.py"
@@ -240,3 +253,48 @@ def test_cli_migrate_cache_invalidates_on_change(tmp_path: Path) -> None:
         # Must invalidate cache and call orchestrator again
         runner.invoke(app, ["migrate", str(target_file), "--diff"])
         assert call_count == 2
+
+
+def test_cli_migrate_default_current_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifies copilot migrate defaults to current directory (Path('.')) when path argument is omitted."""
+    monkeypatch.chdir(tmp_path)
+    clean_file = tmp_path / "app.py"
+    clean_file.write_text("x: int = 1\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["migrate", "--diff"])
+    assert result.exit_code == 0
+    assert "SKIPPED (Clean)" in result.stdout
+
+
+def test_cli_migrate_run_tests_forces_write(tmp_path: Path) -> None:
+    """Verifies passing --run-tests without --diff automatically forces write=True."""
+    legacy_code = (
+        "from pydantic import BaseModel\n\n"
+        "class Model(BaseModel):\n"
+        "    class Config:\n"
+        "        orm_mode = True\n"
+    )
+    modern_code = (
+        "from pydantic import BaseModel, ConfigDict\n\n"
+        "class Model(BaseModel):\n"
+        "    model_config = ConfigDict(from_attributes=True)\n"
+    )
+
+    target_file = tmp_path / "model.py"
+    target_file.write_text(legacy_code, encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test_model.py"
+    test_file.write_text("def test_ok(): assert True\n", encoding="utf-8")
+
+    async def fake_stream(*args, **kwargs):
+        yield {"stage": "start"}
+        yield {"stage": "done", "passed": True, "modern_code": modern_code, "result": {"total_iterations": 1}}
+
+    with patch("copilot_cli.main.MigrationOrchestrator.migrate_stream", side_effect=fake_stream):
+        # Do not pass --write; --run-tests should automatically ensure write=True
+        result = runner.invoke(app, ["migrate", str(tmp_path), "--run-tests"])
+        assert result.exit_code == 0
+        assert "MIGRATED" in result.stdout
+        assert target_file.read_text(encoding="utf-8") == modern_code

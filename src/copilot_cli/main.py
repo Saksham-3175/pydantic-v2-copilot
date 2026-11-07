@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+
 import asyncio
 import os
 import subprocess
@@ -30,6 +33,90 @@ app = typer.Typer(
     help="Autonomous Multi-Agent AST Modernizer & Critic for Pydantic v2",
     no_args_is_help=True,
 )
+
+
+def _find_test_path(resolved_path: Path) -> Path:
+    """Locate tests directory: check resolved_path/tests, resolved_path.parent/tests, and search upwards for git repo root containing tests."""
+    if resolved_path.is_dir() and resolved_path.name == "tests":
+        return resolved_path
+    if resolved_path.is_dir() and (resolved_path / "tests").is_dir():
+        return resolved_path / "tests"
+    if (resolved_path.parent / "tests").is_dir():
+        return resolved_path.parent / "tests"
+    curr = resolved_path if resolved_path.is_dir() else resolved_path.parent
+    for parent in [curr, *curr.parents]:
+        if (parent / ".git").exists():
+            if (parent / "tests").is_dir():
+                return parent / "tests"
+            break
+        if (parent / "tests").is_dir():
+            return parent / "tests"
+    return resolved_path if resolved_path.is_dir() else resolved_path.parent
+
+
+def _check_or_prompt_api_keys() -> None:
+    """Check if GROQ_API_KEY and GEMINI_API_KEY are configured, prompting interactively if missing."""
+    if os.environ.get("GROQ_API_KEY") or os.environ.get("GEMINI_API_KEY"):
+        return
+
+    if sys.stdin.isatty():
+        panel_content = (
+            "[bold yellow]No LLM API keys detected (GROQ_API_KEY or GEMINI_API_KEY).[/bold yellow]\n\n"
+            "• [bold cyan]Offline Deterministic AST Mode[/bold cyan]: Fast, hermetic, rule-based modernizer (zero external API calls).\n"
+            "• [bold green]LLM Augmented Mode[/bold green]: Multi-agent synthesis & reflection via Groq (qwen/qwen3.8-27b) or Gemini (gemini-2.5-flash)."
+        )
+        console.print(Panel(panel_content, title="Copilot Execution Mode", border_style="yellow"))
+        key = typer.prompt(
+            "Enter GROQ_API_KEY now to enable LLM synthesis (or press Enter to proceed in Offline Mode)",
+            default="",
+            show_default=False,
+            hide_input=True,
+        )
+        clean_key = key.strip()
+        if clean_key:
+            os.environ["GROQ_API_KEY"] = clean_key
+            env_file = Path(".env")
+            try:
+                if env_file.exists():
+                    env_text = env_file.read_text(encoding="utf-8")
+                    if "GROQ_API_KEY=" in env_text:
+                        lines = [
+                            f"GROQ_API_KEY={clean_key}" if line.startswith("GROQ_API_KEY=") else line
+                            for line in env_text.splitlines()
+                        ]
+                        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    else:
+                        env_file.write_text(env_text.rstrip() + f"\nGROQ_API_KEY={clean_key}\n", encoding="utf-8")
+                else:
+                    env_file.write_text(f"GROQ_API_KEY={clean_key}\n", encoding="utf-8")
+                console.print("[green]✔ GROQ_API_KEY configured and saved to .env[/green]\n")
+            except Exception:
+                console.print("[green]✔ GROQ_API_KEY configured for current session.[/green]\n")
+        else:
+            console.print("[cyan]Operating in Offline Deterministic AST Mode (zero external API calls)[/cyan]\n")
+    else:
+        console.print("[dim]Operating in Offline Deterministic AST Mode (zero external API calls)[/dim]")
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        version()
+        raise typer.Exit(code=0)
+
+
+@app.callback()
+def root(
+    version_flag: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-v",
+        help="Display version, engine architecture, and active LLM configuration.",
+        callback=version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """Autonomous Multi-Agent AST Modernizer & Critic for Pydantic v2."""
+    pass
 
 
 def _check_git_uncommitted(target_path: Path) -> bool:
@@ -144,8 +231,8 @@ async def _run_migration_stream(
 @app.command()
 def migrate(
     path: Path = typer.Argument(
-        ...,
-        help="Path to Python file or directory to modernize",
+        Path("."),
+        help="Path to Python file or directory to modernize (default: current directory)",
         exists=True,
     ),
     diff: bool = typer.Option(
@@ -179,6 +266,12 @@ def migrate(
 ) -> None:
     """Modernize legacy Pydantic v1 code to Pydantic v2."""
     print_banner()
+    _check_or_prompt_api_keys()
+
+    # If run_tests is requested and diff/dry-run is not explicitly enabled, ensure write=True
+    if run_tests and not (diff or dry_run):
+        write = True
+
     resolved_path = path.resolve()
 
     # Default to diff/preview if write is not requested
@@ -270,20 +363,23 @@ def migrate(
 
     # 3. Optional pytest execution
     if run_tests:
-        test_dir = resolved_path if resolved_path.is_dir() else resolved_path.parent
-        candidate_tests = test_dir / "tests"
-        target_test_path = candidate_tests if candidate_tests.exists() else test_dir
+        target_test_path = _find_test_path(resolved_path)
+        test_root = resolved_path if resolved_path.is_dir() else resolved_path.parent
 
         console.print(f"\n[bold cyan]Running verification test suite on {target_test_path}...[/bold cyan]\n")
-        cmd = [sys.executable, "-m", "pytest", str(target_test_path)]
+        cmd = [sys.executable, "-m", "pytest", "-o", "addopts=", str(target_test_path)]
         env = os.environ.copy()
         # Add target_dir to PYTHONPATH so test imports resolve properly
-        target_root = str(test_dir)
-        env["PYTHONPATH"] = f"{target_root}:{env.get('PYTHONPATH', '')}"
+        target_root_str = str(test_root)
+        env["PYTHONPATH"] = f"{target_root_str}:{env.get('PYTHONPATH', '')}"
 
         proc = subprocess.run(cmd, env=env, check=False)
         if proc.returncode != 0:
             console.print(f"\n[bold red]✖ Target test suite failed with exit code {proc.returncode}[/bold red]")
+            console.print(
+                "[yellow]Note: If failure is due to missing dependencies in the target project, "
+                "ensure the target virtual environment or dependencies are installed and available.[/yellow]"
+            )
             raise typer.Exit(code=proc.returncode)
         else:
             console.print("\n[bold green]✔ Target test suite passed with 100% success![/bold green]")
